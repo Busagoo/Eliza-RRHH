@@ -2,8 +2,11 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { prisma } from "../db";
 
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+function getGoogleCredentials() {
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim() || "";
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim() || "";
+  return { clientId, clientSecret };
+}
 
 export const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -35,11 +38,12 @@ export function getDynamicBaseUrl(headersList?: Headers | { get(name: string): s
  * Returns a configured Google OAuth2 Client, dynamically adapting the redirect URI
  */
 export function getOAuth2Client(baseUrl?: string): OAuth2Client {
+  const { clientId, clientSecret } = getGoogleCredentials();
   const redirectUri = baseUrl
     ? `${baseUrl.replace(/\/$/, "")}/api/auth/gmail/callback`
     : process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/auth/gmail/callback";
 
-  return new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }
 
 /**

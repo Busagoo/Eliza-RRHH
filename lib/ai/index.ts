@@ -1,40 +1,41 @@
 import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const configuredProvider = process.env.AI_PROVIDER;
-
-// 1. Groq Client (using OpenAI-compatible SDK endpoint)
-let groqClient: OpenAI | null = null;
-if (process.env.GROQ_API_KEY) {
-  groqClient = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
+// 1. Dynamic AI Clients (evaluated lazily per request for Cloudflare / Serverless compatibility)
+export function getGroqClient(): OpenAI | null {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (!apiKey) return null;
+  return new OpenAI({
+    apiKey,
     baseURL: "https://api.groq.com/openai/v1",
   });
 }
 
-// 2. OpenAI Client
-let openAiClient: OpenAI | null = null;
-if (process.env.OPENAI_API_KEY) {
-  openAiClient = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
+export function getOpenAiClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return null;
+  return new OpenAI({ apiKey });
 }
 
-// 3. Google Gemini Client
-let geminiClient: GoogleGenerativeAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+export function getGeminiClient(): GoogleGenerativeAI | null {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) return null;
+  return new GoogleGenerativeAI(apiKey);
 }
 
 export function getActiveProvider(): "groq" | "openai" | "gemini" | "mock" {
-  if (configuredProvider === "groq" && groqClient) return "groq";
-  if (configuredProvider === "openai" && openAiClient) return "openai";
-  if (configuredProvider === "gemini" && geminiClient) return "gemini";
+  const configured = process.env.AI_PROVIDER?.trim();
+  const hasGroq = Boolean(process.env.GROQ_API_KEY?.trim());
+  const hasOpenAi = Boolean(process.env.OPENAI_API_KEY?.trim());
+  const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
 
-  // Automatic preference: Groq (ultra fast & free) -> OpenAI -> Gemini -> Mock
-  if (groqClient) return "groq";
-  if (openAiClient) return "openai";
-  if (geminiClient) return "gemini";
+  if (configured === "groq" && hasGroq) return "groq";
+  if (configured === "openai" && hasOpenAi) return "openai";
+  if (configured === "gemini" && hasGemini) return "gemini";
+
+  if (hasGroq) return "groq";
+  if (hasOpenAi) return "openai";
+  if (hasGemini) return "gemini";
   return "mock";
 }
 
@@ -48,6 +49,9 @@ export async function generateStructuredJSON<T>(
   modelOverride?: string
 ): Promise<T> {
   const provider = getActiveProvider();
+  const groqClient = getGroqClient();
+  const openAiClient = getOpenAiClient();
+  const geminiClient = getGeminiClient();
 
   // GROQ (Llama 3.3 70B / Llama 3.1 8B with JSON mode)
   if (provider === "groq" && groqClient) {
@@ -113,6 +117,9 @@ export async function generateCompletion(
   modelOverride?: string
 ): Promise<string> {
   const provider = getActiveProvider();
+  const groqClient = getGroqClient();
+  const openAiClient = getOpenAiClient();
+  const geminiClient = getGeminiClient();
 
   if (provider === "groq" && groqClient) {
     const model = modelOverride || process.env.GROQ_MODEL_FAST || "llama-3.1-8b-instant";
@@ -149,5 +156,3 @@ export async function generateCompletion(
 
   throw new Error("AI provider credentials missing. Please set GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in .env");
 }
-
-export { groqClient, openAiClient, geminiClient };

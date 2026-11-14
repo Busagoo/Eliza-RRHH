@@ -1,4 +1,4 @@
-import { openAiClient, getActiveProvider } from "./index";
+import { getOpenAiClient, getActiveProvider } from "./index";
 import type { CandidateParsedProfile } from "./parser";
 
 export const EMBEDDING_DIMENSIONS = 1536;
@@ -44,6 +44,7 @@ Experiencia Laboral: ${workHistoryStr}
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const provider = getActiveProvider();
+  const openAiClient = getOpenAiClient();
 
   if (provider === "openai" && openAiClient) {
     try {
