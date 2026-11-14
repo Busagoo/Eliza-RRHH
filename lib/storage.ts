@@ -1,7 +1,6 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "crypto";
 import path from "path";
-import fs from "fs/promises";
 import { getEnv } from "./env";
 
 function getS3Client(): S3Client | null {
@@ -29,14 +28,30 @@ function getSupabaseConfig() {
   const supabaseKey =
     getEnv("SUPABASE_SERVICE_ROLE_KEY") ||
     getEnv("SUPABASE_ANON_KEY") ||
+    getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY") ||
     getEnv("SUPABASE_KEY");
 
-  let supabaseUrl = getEnv("SUPABASE_URL");
-  const dbUrl = getEnv("DATABASE_URL");
-  if (!supabaseUrl && dbUrl) {
-    const match = dbUrl.match(/@db\.([a-z0-9]+)\.supabase\.co/);
-    if (match && match[1]) {
-      supabaseUrl = `https://${match[1]}.supabase.co`;
+  let supabaseUrl = getEnv("SUPABASE_URL") || getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const dbUrl = getEnv("DATABASE_URL") || process.env.DATABASE_URL || "";
+  const directUrl = getEnv("DIRECT_URL") || process.env.DIRECT_URL || "";
+
+  // Auto-derive Supabase REST URL if not explicitly provided
+  if (!supabaseUrl) {
+    const candidateUrls = [dbUrl, directUrl];
+    for (const u of candidateUrls) {
+      if (!u) continue;
+      // Direct format: postgresql://...@db.olforouckwdxumfxared.supabase.co:...
+      const matchDirect = u.match(/@db\.([a-z0-9]+)\.supabase\.co/);
+      if (matchDirect && matchDirect[1]) {
+        supabaseUrl = `https://${matchDirect[1]}.supabase.co`;
+        break;
+      }
+      // Pooler format: postgresql://postgres.olforouckwdxumfxared:...@...pooler.supabase.com:...
+      const matchPooler = u.match(/postgres\.([a-z0-9]+):/);
+      if (matchPooler && matchPooler[1]) {
+        supabaseUrl = `https://${matchPooler[1]}.supabase.co`;
+        break;
+      }
     }
   }
 
@@ -49,9 +64,9 @@ function getSupabaseConfig() {
 }
 
 /**
- * Uploads a candidate resume attachment (PDF or DOCX) to S3/R2/Supabase,
- * or saves to a local public directory if S3 credentials are not yet set.
- * Returns the permanent public access URL.
+ * Uploads a candidate resume attachment (PDF or DOCX) to Supabase Storage or S3/R2.
+ * If external storage fails or is unconfigured, gracefully falls back to a Base64 data URL
+ * so that serverless functions (Vercel) NEVER crash on read-only file systems.
  */
 export async function uploadResume(
   buffer: Buffer,
@@ -61,33 +76,32 @@ export async function uploadResume(
   const extension = path.extname(originalFilename).toLowerCase() || ".pdf";
   const uniqueKey = `cv-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
 
-  // 1. Supabase Native REST Storage
-  if (getEnv("STORAGE_PROVIDER") === "supabase") {
-    const { supabaseKey, supabaseUrl, bucket } = getSupabaseConfig();
-    if (supabaseKey && supabaseUrl) {
-      try {
-        const uploadEndpoint = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/${bucket}/${uniqueKey}`;
-        const response = await fetch(uploadEndpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": mimeType || "application/pdf",
-            "x-upsert": "true",
-          },
-          body: new Uint8Array(buffer),
-        });
+  // 1. Supabase Native REST Storage (Preferred)
+  const { supabaseKey, supabaseUrl, bucket } = getSupabaseConfig();
+  if (supabaseKey && supabaseUrl) {
+    try {
+      const uploadEndpoint = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/${bucket}/${uniqueKey}`;
+      const response = await fetch(uploadEndpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${supabaseKey}`,
+          apikey: supabaseKey,
+          "Content-Type": mimeType || "application/pdf",
+          "x-upsert": "true",
+        },
+        body: new Uint8Array(buffer),
+      });
 
-        if (response.ok) {
-          const publicUrl = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/${uniqueKey}`;
-          console.log(`[Storage] Uploaded resume to Supabase Storage: ${publicUrl}`);
-          return publicUrl;
-        } else {
-          const errorMsg = await response.text();
-          console.error(`[Storage] Supabase upload returned ${response.status}: ${errorMsg}`);
-        }
-      } catch (err) {
-        console.error("[Storage] Error uploading to Supabase Storage:", err);
+      if (response.ok) {
+        const publicUrl = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/${uniqueKey}`;
+        console.log(`[Storage] Uploaded resume to Supabase Storage: ${publicUrl}`);
+        return publicUrl;
+      } else {
+        const errorMsg = await response.text();
+        console.warn(`[Storage] Supabase upload returned ${response.status}: ${errorMsg}`);
       }
+    } catch (err: any) {
+      console.warn("[Storage] Error uploading to Supabase Storage:", err.message);
     }
   }
 
@@ -121,19 +135,12 @@ export async function uploadResume(
       }
 
       return `https://${s3Bucket}.s3.${getEnv("S3_REGION") || "us-east-1"}.amazonaws.com/${uniqueKey}`;
-    } catch (error) {
-      console.error("[Storage] S3 upload error, falling back to local storage:", error);
+    } catch (error: any) {
+      console.warn("[Storage] S3 upload error:", error.message);
     }
   }
 
-  // Fallback to local public storage: /public/uploads/resumes
-  const localUploadDir = path.join(process.cwd(), "public", "uploads", "resumes");
-  await fs.mkdir(localUploadDir, { recursive: true });
-
-  const localFilename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
-  const localFilePath = path.join(localUploadDir, localFilename);
-  await fs.writeFile(localFilePath, buffer);
-
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  return `${baseUrl}/uploads/resumes/${localFilename}`;
+  // 3. Fallback: Base64 Data URL (Never throws filesystem error in Serverless!)
+  const base64Data = buffer.toString("base64");
+  return `data:${mimeType || "application/pdf"};base64,${base64Data}`;
 }

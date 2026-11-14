@@ -14,8 +14,24 @@ export async function extractTextFromDocument(
   try {
     // 1. PDF Documents
     if (lowerName.endsWith(".pdf") || mimeType === "application/pdf") {
-      const data = await pdfParse(buffer);
-      return cleanExtractedText(data.text);
+      try {
+        const data = await pdfParse(buffer);
+        if (data.text && data.text.trim().length > 10) {
+          return cleanExtractedText(data.text);
+        }
+      } catch (pdfErr: any) {
+        console.warn(`[DocumentParser] pdf-parse error on ${filename}, attempting text stream fallback:`, pdfErr.message);
+      }
+
+      // Stream fallback: extract text streams from PDF buffer directly
+      const rawString = buffer.toString("binary");
+      const textMatches = rawString.match(/\(([^)]+)\)\s*Tj/g) || rawString.match(/\[([^\]]+)\]\s*TJ/g);
+      if (textMatches && textMatches.length > 5) {
+        const extracted = textMatches.join(" ").replace(/[()[\]\\]/g, "");
+        if (extracted.trim().length > 30) {
+          return cleanExtractedText(extracted);
+        }
+      }
     }
 
     // 2. Word Documents (.docx)

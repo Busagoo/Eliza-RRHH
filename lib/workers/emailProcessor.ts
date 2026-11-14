@@ -53,12 +53,24 @@ export async function processSingleEmail(
     }
 
     if (existingEmail.status === EmailStatus.PROCESSED && existingEmail.candidate) {
-      return {
-        messageId,
-        status: EmailStatus.PROCESSED,
-        isResume: true,
-        candidateId: existingEmail.candidate.id,
-      };
+      // If the candidate was previously created with empty text due to storage crash
+      // (resumeText is empty or "Sin texto extraído." or skills is empty despite having attachment),
+      // allow it to re-extract and re-parse so it is properly populated!
+      const isCorrupted =
+        existingEmail.hasAttachment &&
+        (!existingEmail.candidate.resumeText ||
+          existingEmail.candidate.resumeText === "Sin texto extraído." ||
+          (existingEmail.candidate.skills?.length === 0 && (!existingEmail.candidate.experienceYears || existingEmail.candidate.experienceYears === 0)));
+
+      if (!isCorrupted) {
+        return {
+          messageId,
+          status: EmailStatus.PROCESSED,
+          isResume: true,
+          candidateId: existingEmail.candidate.id,
+        };
+      }
+      console.log(`[EmailProcessor] Re-analyzing email ${messageId} because previous candidate profile was empty/corrupted.`);
     }
 
     if (existingEmail.status === EmailStatus.DISCARDED) {
@@ -141,28 +153,40 @@ export async function processSingleEmail(
     let resumeFileUrl: string | null = null;
 
     if (primaryAttachment) {
+      let fileBuffer: Buffer | null = null;
       try {
-        const fileBuffer = await downloadGmailAttachment(
+        fileBuffer = await downloadGmailAttachment(
           gmail,
           messageId,
           primaryAttachment.attachmentId
         );
-
-        // Upload to S3 / Cloudflare R2 / Local Storage for permanent access
-        resumeFileUrl = await uploadResume(
-          fileBuffer,
-          primaryAttachment.filename,
-          primaryAttachment.mimeType
-        );
-
-        // Extract plain text from PDF or DOCX
-        resumeText = await extractTextFromDocument(
-          fileBuffer,
-          primaryAttachment.filename,
-          primaryAttachment.mimeType
-        );
       } catch (attErr: any) {
-        console.warn(`[EmailProcessor] Failed to download or parse attachment for ${messageId}:`, attErr.message);
+        console.warn(`[EmailProcessor] Failed to download attachment for ${messageId}:`, attErr.message);
+      }
+
+      if (fileBuffer) {
+        // STEP 2A: EXTRACT TEXT FROM ATTACHMENT FIRST (CRITICAL FOR PARSING!)
+        try {
+          resumeText = await extractTextFromDocument(
+            fileBuffer,
+            primaryAttachment.filename,
+            primaryAttachment.mimeType
+          );
+          console.log(`[EmailProcessor] Successfully extracted ${resumeText.length} characters of CV text from ${primaryAttachment.filename}`);
+        } catch (docErr: any) {
+          console.warn(`[EmailProcessor] Failed to extract text from ${primaryAttachment.filename}:`, docErr.message);
+        }
+
+        // STEP 2B: UPLOAD TO PERMANENT STORAGE (INDEPENDENT - NEVER BLOCK PARSING IF STORAGE FAILS)
+        try {
+          resumeFileUrl = await uploadResume(
+            fileBuffer,
+            primaryAttachment.filename,
+            primaryAttachment.mimeType
+          );
+        } catch (storageErr: any) {
+          console.warn(`[EmailProcessor] Upload to storage failed for ${primaryAttachment.filename}:`, storageErr.message);
+        }
       }
     }
 
