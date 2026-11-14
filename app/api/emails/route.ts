@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { emailId, isDismissed, restoreAll } = body;
+    const { emailId, emailIds, isDismissed, restoreAll } = body;
 
     if (restoreAll) {
       const res = await prisma.email.updateMany({
@@ -89,8 +89,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, count: res.count });
     }
 
+    if (Array.isArray(emailIds) && emailIds.length > 0) {
+      const res = await prisma.email.updateMany({
+        where: { id: { in: emailIds } },
+        data: { isDismissed: Boolean(isDismissed) },
+      });
+      return NextResponse.json({ success: true, count: res.count, emailIds });
+    }
+
     if (!emailId) {
-      return NextResponse.json({ error: "Missing emailId" }, { status: 400 });
+      return NextResponse.json({ error: "Missing emailId or emailIds" }, { status: 400 });
     }
 
     const updated = await prisma.email.update({

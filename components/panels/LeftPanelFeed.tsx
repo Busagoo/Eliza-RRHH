@@ -62,6 +62,7 @@ interface LeftPanelFeedProps {
   onToggleBackfill?: (action: "start" | "pause" | "reset") => void;
   onDismissEmail?: (emailId: string) => Promise<void>;
   onRestoreEmail?: (emailId: string) => Promise<void>;
+  onRestoreMultiple?: (emailIds: string[]) => Promise<void>;
   onDismissAllDiscarded?: () => Promise<void>;
   onRestoreAllDismissed?: () => Promise<void>;
   onRefresh?: () => void;
@@ -76,21 +77,22 @@ export function LeftPanelFeed({
   onToggleBackfill,
   onDismissEmail,
   onRestoreEmail,
+  onRestoreMultiple,
   onDismissAllDiscarded,
   onRestoreAllDismissed,
   onRefresh,
 }: LeftPanelFeedProps) {
-  const [filterTab, setFilterTab] = useState<"ALL" | "PROCESSED" | "PROCESSING" | "DISCARDED" | "DISMISSED">("ALL");
+  const [filterTab, setFilterTab] = useState<"ALL" | "PROCESSED" | "PROCESSING" | "DISCARDED" | "TRASH">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
   const [cleaning, setCleaning] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
   const filteredEmails = emails.filter((mail) => {
-    // Dismissed filtering
-    if (filterTab === "DISMISSED") {
+    // Papelera vs Active
+    if (filterTab === "TRASH") {
       if (!mail.isDismissed) return false;
     } else {
-      // In all other tabs, don't show dismissed unless on DISMISSED tab
       if (mail.isDismissed) return false;
       if (filterTab !== "ALL" && mail.status !== filterTab) return false;
     }
@@ -136,6 +138,35 @@ export function LeftPanelFeed({
     setRestoring(true);
     try {
       await onRestoreAllDismissed();
+      setSelectedTrashIds(new Set());
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const toggleSelectTrash = (id: string) => {
+    setSelectedTrashIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAllTrash = () => {
+    if (selectedTrashIds.size === filteredEmails.length) {
+      setSelectedTrashIds(new Set());
+    } else {
+      setSelectedTrashIds(new Set(filteredEmails.map((e) => e.id)));
+    }
+  };
+
+  const handleRestoreSelected = async () => {
+    if (!onRestoreMultiple || selectedTrashIds.size === 0) return;
+    setRestoring(true);
+    try {
+      await onRestoreMultiple(Array.from(selectedTrashIds));
+      setSelectedTrashIds(new Set());
     } finally {
       setRestoring(false);
     }
@@ -152,9 +183,13 @@ export function LeftPanelFeed({
       {/* Panel Header */}
       <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900/40">
         <div className="flex items-center space-x-2">
-          <Inbox className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+          {filterTab === "TRASH" ? (
+            <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+          ) : (
+            <Inbox className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+          )}
           <span className="font-semibold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300">
-            Feed de Correos
+            {filterTab === "TRASH" ? "Papelera de Correos" : "Feed de Correos"}
           </span>
         </div>
 
@@ -164,21 +199,9 @@ export function LeftPanelFeed({
               onClick={handleCleanDiscarded}
               disabled={cleaning}
               className="text-[10px] px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 hover:bg-rose-200 transition font-medium disabled:opacity-50"
-              title="Ocultar todos los descartados de la lista principal"
+              title="Mover todos los correos no-CV a la papelera"
             >
-              {cleaning ? "Ocultando..." : "Ocultar descartados"}
-            </button>
-          )}
-
-          {filterTab === "DISMISSED" && onRestoreAllDismissed && countDismissed > 0 && (
-            <button
-              onClick={handleRestoreAll}
-              disabled={restoring}
-              className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 transition font-medium disabled:opacity-50 flex items-center space-x-1"
-              title="Restaurar todos los correos ocultos"
-            >
-              <RotateCcw className="w-2.5 h-2.5" />
-              <span>{restoring ? "Restaurando..." : "Restaurar todos"}</span>
+              {cleaning ? "Moviendo..." : "Mover descartados a papelera"}
             </button>
           )}
 
@@ -268,7 +291,11 @@ export function LeftPanelFeed({
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar por remitente o asunto..."
+            placeholder={
+              filterTab === "TRASH"
+                ? "Buscar en la papelera..."
+                : "Buscar por remitente o asunto..."
+            }
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-8 pr-2 py-1.5 text-xs rounded-lg bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 focus:border-indigo-500 focus:outline-none placeholder:text-slate-400 text-slate-800 dark:text-slate-100"
@@ -321,19 +348,68 @@ export function LeftPanelFeed({
             <span>No es CV</span>
           </button>
           <button
-            onClick={() => setFilterTab("DISMISSED")}
+            onClick={() => setFilterTab("TRASH")}
             className={`px-2 py-1 rounded transition flex items-center space-x-1 ${
-              filterTab === "DISMISSED"
-                ? "bg-purple-700 text-white font-semibold shadow-sm"
-                : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-purple-600"
+              filterTab === "TRASH"
+                ? "bg-rose-600 text-white font-semibold shadow-sm"
+                : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-rose-600"
             }`}
-            title="Correos que fueron ocultados"
+            title="Papelera: correos eliminados u ocultados"
           >
-            <EyeOff className="w-3 h-3" />
-            <span>Ocultos {countDismissed > 0 && `(${countDismissed})`}</span>
+            <Trash2 className="w-3 h-3" />
+            <span>Papelera {countDismissed > 0 && `(${countDismissed})`}</span>
           </button>
         </div>
       </div>
+
+      {/* Dedicated Papelera Control Bar (when in TRASH tab) */}
+      {filterTab === "TRASH" && (
+        <div className="px-3 py-2 bg-rose-50/80 dark:bg-rose-950/30 border-b border-rose-200 dark:border-rose-900/50 flex items-center justify-between text-xs">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="select-all-trash"
+              checked={filteredEmails.length > 0 && selectedTrashIds.size === filteredEmails.length}
+              onChange={handleSelectAllTrash}
+              className="w-3.5 h-3.5 rounded text-emerald-600 border-rose-300 dark:border-rose-800 focus:ring-0 cursor-pointer"
+            />
+            <label
+              htmlFor="select-all-trash"
+              className="text-[11px] text-rose-900 dark:text-rose-200 font-medium cursor-pointer select-none"
+            >
+              {selectedTrashIds.size > 0
+                ? `${selectedTrashIds.size} de ${filteredEmails.length} seleccionados`
+                : "Seleccionar todos"}
+            </label>
+          </div>
+
+          <div className="flex items-center space-x-1.5">
+            {selectedTrashIds.size > 0 && onRestoreMultiple && (
+              <button
+                onClick={handleRestoreSelected}
+                disabled={restoring}
+                className="text-[10px] px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition flex items-center space-x-1 shadow-xs disabled:opacity-50"
+                title="Volver a mostrar los correos seleccionados en la bandeja"
+              >
+                <RotateCcw className="w-2.5 h-2.5" />
+                <span>Volver a mostrar ({selectedTrashIds.size})</span>
+              </button>
+            )}
+
+            {onRestoreAllDismissed && countDismissed > 0 && (
+              <button
+                onClick={handleRestoreAll}
+                disabled={restoring}
+                className="text-[10px] px-2 py-1 rounded bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 transition font-medium disabled:opacity-50 flex items-center space-x-1 shadow-2xs"
+                title="Restaurar toda la papelera a la bandeja principal"
+              >
+                <RotateCcw className="w-2.5 h-2.5 text-indigo-500" />
+                <span>{restoring ? "Restaurando..." : "Restaurar todos"}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Email Feed List */}
       <div className="flex-1 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800/60">
@@ -344,28 +420,49 @@ export function LeftPanelFeed({
           </div>
         ) : filteredEmails.length === 0 ? (
           <div className="p-8 text-center text-slate-400 text-xs space-y-2">
-            <Inbox className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
-            <p>
-              {filterTab === "DISMISSED"
-                ? "No hay correos ocultos."
-                : "No hay correos en esta sección."}
-            </p>
+            {filterTab === "TRASH" ? (
+              <>
+                <Trash2 className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
+                <p className="font-medium text-slate-500 dark:text-slate-400">La papelera está vacía.</p>
+                <p className="text-[11px] text-slate-400">Los correos que descartes u ocultes aparecerán aquí para que puedas recuperarlos.</p>
+              </>
+            ) : (
+              <>
+                <Inbox className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
+                <p>No hay correos en esta sección.</p>
+              </>
+            )}
           </div>
         ) : (
           filteredEmails.map((email) => {
             const { text: dateDisplay, isHistorical } = formatDate(email.receivedAt);
             const isClickable = Boolean(email.candidate?.id);
+            const isSelected = selectedTrashIds.has(email.id);
 
             return (
               <div
                 key={email.id}
-                className={`p-3 transition-colors bg-white dark:bg-transparent hover:bg-slate-100/70 dark:hover:bg-slate-900/40 relative group ${
-                  email.isDismissed ? "opacity-75 bg-slate-50/50 dark:bg-slate-900/20" : ""
+                className={`p-3 transition-colors relative group ${
+                  filterTab === "TRASH"
+                    ? isSelected
+                      ? "bg-rose-50/80 dark:bg-rose-950/40 border-l-2 border-rose-500"
+                      : "bg-white/60 dark:bg-slate-900/30 hover:bg-rose-50/40 dark:hover:bg-rose-950/20"
+                    : "bg-white dark:bg-transparent hover:bg-slate-100/70 dark:hover:bg-slate-900/40"
                 }`}
               >
                 {/* Top Row: Sender, Date & Visibility Action */}
                 <div className="flex items-start justify-between gap-1 mb-1">
-                  <div className="flex items-center space-x-1.5 truncate">
+                  <div className="flex items-center space-x-2 truncate">
+                    {/* Checkbox only in TRASH mode */}
+                    {filterTab === "TRASH" && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectTrash(email.id)}
+                        className="w-3.5 h-3.5 rounded text-emerald-600 border-slate-300 dark:border-slate-700 focus:ring-0 cursor-pointer flex-shrink-0"
+                      />
+                    )}
+
                     <span
                       onClick={() => {
                         if (email.candidate?.id && onSelectCandidate) {
@@ -378,11 +475,6 @@ export function LeftPanelFeed({
                     >
                       {email.candidate?.fullName || email.senderName || email.sender}
                     </span>
-                    {email.isDismissed && (
-                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
-                        Oculto
-                      </span>
-                    )}
                   </div>
 
                   <div className="flex items-center space-x-1.5 flex-shrink-0">
@@ -397,25 +489,26 @@ export function LeftPanelFeed({
                       {dateDisplay}
                     </span>
 
-                    {/* Unhide / Restore button if dismissed */}
-                    {email.isDismissed && onRestoreEmail && (
+                    {/* Button inside TRASH: 'Volver a mostrar' */}
+                    {filterTab === "TRASH" && onRestoreEmail && (
                       <button
                         onClick={() => onRestoreEmail(email.id)}
-                        className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 p-0.5 rounded transition"
-                        title="Desocultar / Restaurar correo a la bandeja principal"
+                        className="flex items-center space-x-1 px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-[10px] transition shadow-xs"
+                        title="Volver a mostrar este correo en la bandeja principal"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <RotateCcw className="w-2.5 h-2.5" />
+                        <span>Volver a mostrar</span>
                       </button>
                     )}
 
-                    {/* Hide button if not dismissed */}
-                    {!email.isDismissed && onDismissEmail && (
+                    {/* Button outside TRASH: 'Mover a la papelera' */}
+                    {filterTab !== "TRASH" && onDismissEmail && (
                       <button
                         onClick={() => onDismissEmail(email.id)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-0.5 rounded transition"
-                        title="Ocultar este correo (podrás desocultarlo desde la pestaña Ocultos)"
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-1 rounded transition"
+                        title="Mover a la papelera (puedes restaurarlo cuando quieras)"
                       >
-                        <EyeOff className="w-3.5 h-3.5" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>

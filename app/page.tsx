@@ -150,9 +150,39 @@ export default function ATSDashboard() {
         setEmails((prev) =>
           prev.map((e) => (e.id === emailId ? { ...e, isDismissed: false } : e))
         );
+        setBannerMessage({
+          type: "success",
+          text: "Correo restaurado a la bandeja principal.",
+        });
+        setTimeout(() => setBannerMessage(null), 3000);
       }
     } catch (err) {
       console.error("Error restoring email:", err);
+    }
+  };
+
+  /**
+   * Restore multiple selected emails from trash back to inbox feed
+   */
+  const handleRestoreMultipleEmails = async (emailIds: string[]) => {
+    try {
+      const res = await fetch("/api/emails", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailIds, isDismissed: false }),
+      });
+      if (res.ok) {
+        setEmails((prev) =>
+          prev.map((e) => (emailIds.includes(e.id) ? { ...e, isDismissed: false } : e))
+        );
+        setBannerMessage({
+          type: "success",
+          text: `Se volvieron a mostrar ${emailIds.length} correos en la bandeja principal.`,
+        });
+        setTimeout(() => setBannerMessage(null), 4000);
+      }
+    } catch (err) {
+      console.error("Error restoring multiple emails:", err);
     }
   };
 
@@ -172,7 +202,7 @@ export default function ATSDashboard() {
         );
         setBannerMessage({
           type: "success",
-          text: "Se han ocultado todos los correos descartados (puedes verlos o restaurarlos en la pestaña 'Ocultos').",
+          text: "Se han movido los correos descartados a la papelera (puedes verlos o recuperarlos cuando quieras en la pestaña 'Papelera').",
         });
         setTimeout(() => setBannerMessage(null), 4000);
       }
@@ -182,7 +212,7 @@ export default function ATSDashboard() {
   };
 
   /**
-   * Restore all hidden emails
+   * Restore all hidden emails from trash
    */
   const handleRestoreAllDismissed = async () => {
     try {
@@ -195,7 +225,7 @@ export default function ATSDashboard() {
         setEmails((prev) => prev.map((e) => ({ ...e, isDismissed: false })));
         setBannerMessage({
           type: "success",
-          text: "Se han restaurado todos los correos ocultos a la bandeja principal.",
+          text: "Se han restaurado todos los correos de la papelera a la bandeja principal.",
         });
         setTimeout(() => setBannerMessage(null), 4000);
       }
@@ -529,6 +559,7 @@ export default function ATSDashboard() {
               onToggleBackfill={handleToggleBackfill}
               onDismissEmail={handleDismissEmail}
               onRestoreEmail={handleRestoreEmail}
+              onRestoreMultiple={handleRestoreMultipleEmails}
               onDismissAllDiscarded={handleDismissAllDiscarded}
               onRestoreAllDismissed={handleRestoreAllDismissed}
               onRefresh={fetchEmailFeed}
@@ -567,6 +598,7 @@ export default function ATSDashboard() {
               onToggleBackfill={handleToggleBackfill}
               onDismissEmail={handleDismissEmail}
               onRestoreEmail={handleRestoreEmail}
+              onRestoreMultiple={handleRestoreMultipleEmails}
               onDismissAllDiscarded={handleDismissAllDiscarded}
               onRestoreAllDismissed={handleRestoreAllDismissed}
               onRefresh={fetchEmailFeed}
