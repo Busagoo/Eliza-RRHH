@@ -2,44 +2,47 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs/promises";
+import { getEnv } from "./env";
 
-// Configure S3 client if environment variables are provided
-const s3Configured = Boolean(
-  process.env.S3_ACCESS_KEY_ID &&
-  process.env.S3_SECRET_ACCESS_KEY &&
-  process.env.S3_BUCKET_NAME
-);
+function getS3Client(): S3Client | null {
+  const accessKeyId = getEnv("S3_ACCESS_KEY_ID");
+  const secretAccessKey = getEnv("S3_SECRET_ACCESS_KEY");
+  const bucketName = getEnv("S3_BUCKET_NAME");
 
-const s3Client = s3Configured
-  ? new S3Client({
-      region: process.env.S3_REGION || "auto",
-      endpoint: process.env.S3_ENDPOINT || undefined,
-      credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
-      },
-      forcePathStyle: process.env.STORAGE_PROVIDER === "supabase",
-    })
-  : null;
+  if (!accessKeyId || !secretAccessKey || !bucketName) {
+    return null;
+  }
+
+  return new S3Client({
+    region: getEnv("S3_REGION") || "auto",
+    endpoint: getEnv("S3_ENDPOINT") || undefined,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+    },
+    forcePathStyle: getEnv("STORAGE_PROVIDER") === "supabase",
+  });
+}
 
 // Supabase Native REST Storage Config
 function getSupabaseConfig() {
   const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_KEY;
+    getEnv("SUPABASE_SERVICE_ROLE_KEY") ||
+    getEnv("SUPABASE_ANON_KEY") ||
+    getEnv("SUPABASE_KEY");
 
-  let supabaseUrl = process.env.SUPABASE_URL;
-  if (!supabaseUrl && process.env.DATABASE_URL) {
-    const match = process.env.DATABASE_URL.match(/@db\.([a-z0-9]+)\.supabase\.co/);
+  let supabaseUrl = getEnv("SUPABASE_URL");
+  const dbUrl = getEnv("DATABASE_URL");
+  if (!supabaseUrl && dbUrl) {
+    const match = dbUrl.match(/@db\.([a-z0-9]+)\.supabase\.co/);
     if (match && match[1]) {
       supabaseUrl = `https://${match[1]}.supabase.co`;
     }
   }
 
   const bucket =
-    process.env.SUPABASE_STORAGE_BUCKET ||
-    process.env.S3_BUCKET_NAME ||
+    getEnv("SUPABASE_STORAGE_BUCKET") ||
+    getEnv("S3_BUCKET_NAME") ||
     "resumes";
 
   return { supabaseKey, supabaseUrl, bucket };
@@ -59,7 +62,7 @@ export async function uploadResume(
   const uniqueKey = `cv-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
 
   // 1. Supabase Native REST Storage
-  if (process.env.STORAGE_PROVIDER === "supabase") {
+  if (getEnv("STORAGE_PROVIDER") === "supabase") {
     const { supabaseKey, supabaseUrl, bucket } = getSupabaseConfig();
     if (supabaseKey && supabaseUrl) {
       try {
@@ -89,11 +92,13 @@ export async function uploadResume(
   }
 
   // 2. S3 / R2 / S3-compatible Supabase endpoint
+  const s3Client = getS3Client();
+  const s3Bucket = getEnv("S3_BUCKET_NAME") || "resumes";
 
-  if (s3Client && process.env.S3_BUCKET_NAME) {
+  if (s3Client && s3Bucket) {
     try {
       const command = new PutObjectCommand({
-        Bucket: process.env.S3_BUCKET_NAME,
+        Bucket: s3Bucket,
         Key: uniqueKey,
         Body: buffer,
         ContentType: mimeType || "application/pdf",
@@ -105,16 +110,17 @@ export async function uploadResume(
 
       await s3Client.send(command);
 
-      if (process.env.S3_PUBLIC_URL) {
-        return `${process.env.S3_PUBLIC_URL.replace(/\/$/, "")}/${uniqueKey}`;
+      const publicUrl = getEnv("S3_PUBLIC_URL");
+      if (publicUrl) {
+        return `${publicUrl.replace(/\/$/, "")}/${uniqueKey}`;
       }
 
-      // Default S3 URL format
-      if (process.env.S3_ENDPOINT) {
-        return `${process.env.S3_ENDPOINT.replace(/\/$/, "")}/${process.env.S3_BUCKET_NAME}/${uniqueKey}`;
+      const endpoint = getEnv("S3_ENDPOINT");
+      if (endpoint) {
+        return `${endpoint.replace(/\/$/, "")}/${s3Bucket}/${uniqueKey}`;
       }
 
-      return `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.S3_REGION || "us-east-1"}.amazonaws.com/${uniqueKey}`;
+      return `https://${s3Bucket}.s3.${getEnv("S3_REGION") || "us-east-1"}.amazonaws.com/${uniqueKey}`;
     } catch (error) {
       console.error("[Storage] S3 upload error, falling back to local storage:", error);
     }

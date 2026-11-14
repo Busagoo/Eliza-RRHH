@@ -1,10 +1,11 @@
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { prisma } from "../db";
+import { getEnv } from "../env";
 
 function getGoogleCredentials() {
-  const clientId = process.env.GOOGLE_CLIENT_ID?.trim() || "";
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim() || "";
+  const clientId = getEnv("GOOGLE_CLIENT_ID")?.trim() || "";
+  const clientSecret = getEnv("GOOGLE_CLIENT_SECRET")?.trim() || "";
   return { clientId, clientSecret };
 }
 
@@ -31,7 +32,7 @@ export function getDynamicBaseUrl(headersList?: Headers | { get(name: string): s
     }
   }
 
-  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return getEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000";
 }
 
 /**
@@ -41,7 +42,7 @@ export function getOAuth2Client(baseUrl?: string): OAuth2Client {
   const { clientId, clientSecret } = getGoogleCredentials();
   const redirectUri = baseUrl
     ? `${baseUrl.replace(/\/$/, "")}/api/auth/gmail/callback`
-    : process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/auth/gmail/callback";
+    : getEnv("GOOGLE_REDIRECT_URI") || "http://localhost:3000/api/auth/gmail/callback";
 
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }
@@ -75,9 +76,10 @@ export async function getTokensFromCode(code: string, baseUrl?: string) {
 export async function getAuthenticatedGmailClient(userEmail?: string) {
   const oauth2Client = getOAuth2Client();
 
-  if (process.env.GOOGLE_REFRESH_TOKEN) {
+  const defaultRefreshToken = getEnv("GOOGLE_REFRESH_TOKEN");
+  if (defaultRefreshToken) {
     oauth2Client.setCredentials({
-      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+      refresh_token: defaultRefreshToken,
     });
     return google.gmail({ version: "v1", auth: oauth2Client });
   }

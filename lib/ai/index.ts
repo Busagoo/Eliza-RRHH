@@ -1,9 +1,10 @@
 import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getEnv } from "../env";
 
 // 1. Dynamic AI Clients (evaluated lazily per request for Cloudflare / Serverless compatibility)
 export function getGroqClient(): OpenAI | null {
-  const apiKey = process.env.GROQ_API_KEY?.trim();
+  const apiKey = getEnv("GROQ_API_KEY")?.trim();
   if (!apiKey) return null;
   return new OpenAI({
     apiKey,
@@ -12,22 +13,22 @@ export function getGroqClient(): OpenAI | null {
 }
 
 export function getOpenAiClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = getEnv("OPENAI_API_KEY")?.trim();
   if (!apiKey) return null;
   return new OpenAI({ apiKey });
 }
 
 export function getGeminiClient(): GoogleGenerativeAI | null {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const apiKey = getEnv("GEMINI_API_KEY")?.trim();
   if (!apiKey) return null;
   return new GoogleGenerativeAI(apiKey);
 }
 
 export function getActiveProvider(): "groq" | "openai" | "gemini" | "mock" {
-  const configured = process.env.AI_PROVIDER?.trim();
-  const hasGroq = Boolean(process.env.GROQ_API_KEY?.trim());
-  const hasOpenAi = Boolean(process.env.OPENAI_API_KEY?.trim());
-  const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const configured = getEnv("AI_PROVIDER")?.trim();
+  const hasGroq = Boolean(getEnv("GROQ_API_KEY")?.trim());
+  const hasOpenAi = Boolean(getEnv("OPENAI_API_KEY")?.trim());
+  const hasGemini = Boolean(getEnv("GEMINI_API_KEY")?.trim());
 
   if (configured === "groq" && hasGroq) return "groq";
   if (configured === "openai" && hasOpenAi) return "openai";
@@ -55,7 +56,7 @@ export async function generateStructuredJSON<T>(
 
   // GROQ (Llama 3.3 70B / Llama 3.1 8B with JSON mode)
   if (provider === "groq" && groqClient) {
-    const model = modelOverride || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+    const model = modelOverride || getEnv("GROQ_MODEL") || "openai/gpt-oss-120b";
     const response = await groqClient.chat.completions.create({
       model,
       response_format: { type: "json_object" },
@@ -122,7 +123,7 @@ export async function generateCompletion(
   const geminiClient = getGeminiClient();
 
   if (provider === "groq" && groqClient) {
-    const model = modelOverride || process.env.GROQ_MODEL_FAST || "llama-3.1-8b-instant";
+    const model = modelOverride || getEnv("GROQ_MODEL_FAST") || "openai/gpt-oss-20b";
     const response = await groqClient.chat.completions.create({
       model,
       messages: [

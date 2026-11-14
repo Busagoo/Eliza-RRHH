@@ -4,6 +4,7 @@ import { getAuthenticatedGmailClient } from "../gmail/client";
 import { listGmailMessages } from "../gmail/service";
 import { processSingleEmail } from "./emailProcessor";
 import { SyncStatus, EmailStatus } from "@prisma/client";
+import { getEnv } from "../env";
 
 // In-memory lock to prevent duplicate worker executions per node process
 const activeWorkers = new Set<string>();
@@ -61,14 +62,12 @@ async function executeBackfillLoop(accountId?: string, options: BackfillOptions 
     orderBy: { createdAt: "desc" },
   });
 
-  const defaultQuery =
-    process.env.BACKFILL_QUERY !== undefined && process.env.BACKFILL_QUERY !== ""
-      ? process.env.BACKFILL_QUERY
-      : "in:inbox";
+  const envQuery = getEnv("BACKFILL_QUERY");
+  const defaultQuery = envQuery !== undefined && envQuery !== "" ? envQuery : "in:inbox";
 
   const queryFilter = options.queryFilter || syncState?.queryFilter || defaultQuery;
-  const batchSize = options.batchSize || Number(process.env.BACKFILL_BATCH_SIZE) || 15;
-  const delayMs = options.delayMs || Number(process.env.BACKFILL_DELAY_MS) || 600;
+  const batchSize = options.batchSize || Number(getEnv("BACKFILL_BATCH_SIZE")) || 15;
+  const delayMs = options.delayMs || Number(getEnv("BACKFILL_DELAY_MS")) || 600;
 
   if (!syncState || options.reset) {
     syncState = await prisma.syncState.create({

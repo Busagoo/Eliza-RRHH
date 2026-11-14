@@ -1,4 +1,5 @@
 import { generateStructuredJSON, getActiveProvider } from "./index";
+import { getEnv } from "../env";
 
 export interface RankedCandidateResult {
   candidateId: string;
@@ -90,7 +91,7 @@ Evaluate each candidate against the requirements and return the array of evaluat
       const response = await generateStructuredJSON<{ evaluations: RankedCandidateResult[] }>(
         RERANK_SYSTEM_PROMPT,
         userPrompt,
-        process.env.GROQ_MODEL || process.env.OPENAI_MODEL_RERANK || process.env.GEMINI_MODEL_RERANK
+        getEnv("GROQ_MODEL") || getEnv("OPENAI_MODEL_RERANK") || getEnv("GEMINI_MODEL_RERANK")
       );
 
       if (response && Array.isArray(response.evaluations)) {

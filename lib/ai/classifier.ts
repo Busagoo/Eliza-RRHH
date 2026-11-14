@@ -1,4 +1,5 @@
 import { generateStructuredJSON, getActiveProvider } from "./index";
+import { getEnv } from "../env";
 
 export interface ClassificationResult {
   isResume: boolean;
@@ -94,7 +95,7 @@ Output strictly JSON format:
     const result = await generateStructuredJSON<ClassificationResult>(
       systemPrompt,
       userPrompt,
-      process.env.GROQ_MODEL_FAST || process.env.OPENAI_MODEL_FAST || process.env.GEMINI_MODEL_FAST
+      getEnv("GROQ_MODEL_FAST") || getEnv("OPENAI_MODEL_FAST") || getEnv("GEMINI_MODEL_FAST")
     );
 
     return {

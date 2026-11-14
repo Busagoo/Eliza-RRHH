@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { getEnv } from "./env";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -10,11 +11,11 @@ function getPrismaClient(): PrismaClient {
     return globalThis.prismaGlobal;
   }
 
+  const dbUrl = getEnv("DATABASE_URL") || process.env.DATABASE_URL;
+
   const client = new PrismaClient({
-    datasources: process.env.DATABASE_URL
-      ? { db: { url: process.env.DATABASE_URL } }
-      : undefined,
-    log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    datasources: dbUrl ? { db: { url: dbUrl } } : undefined,
+    log: getEnv("NODE_ENV") === "development" ? ["warn", "error"] : ["error"],
   });
 
   if (process.env.NODE_ENV !== "production") {
