@@ -7,8 +7,9 @@ import { CentralPanelRanking } from "@/components/panels/CentralPanelRanking";
 import { RightPanelSearch, SearchFilters } from "@/components/panels/RightPanelSearch";
 import { ResumeViewerModal } from "@/components/ui/ResumeViewerModal";
 import { CandidateDetailModal } from "@/components/ui/CandidateDetailModal";
+import { LoginWall } from "@/components/auth/LoginWall";
 import { CandidateSearchResponseItem } from "@/app/api/candidates/search/route";
-import { Inbox, Award, SlidersHorizontal } from "lucide-react";
+import { Inbox, Award, SlidersHorizontal, Loader2 } from "lucide-react";
 
 export default function ATSDashboard() {
   // Theme state: dark / light
@@ -16,6 +17,10 @@ export default function ATSDashboard() {
 
   // Mobile active tab: "feed" | "ranking" | "search"
   const [mobileTab, setMobileTab] = useState<"feed" | "ranking" | "search">("ranking");
+
+  // Auth checking state
+  const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Feed & Sync States
   const [emails, setEmails] = useState<EmailItem[]>([]);
@@ -54,7 +59,6 @@ export default function ATSDashboard() {
         document.documentElement.classList.remove("dark");
       }
     } else {
-      // Default to light mode as requested by user
       document.documentElement.classList.remove("dark");
     }
   }, []);
@@ -71,7 +75,7 @@ export default function ATSDashboard() {
   };
 
   /**
-   * Fetch sync state and metrics
+   * Fetch sync state and account status
    */
   const fetchSyncStatus = useCallback(async () => {
     try {
@@ -83,10 +87,14 @@ export default function ATSDashboard() {
         }
         if (data.account?.email) {
           setAccountEmail(data.account.email);
+        } else {
+          setAccountEmail(null);
         }
       }
     } catch (err) {
       console.warn("Could not fetch sync status:", err);
+    } finally {
+      setCheckingAuth(false);
     }
   }, []);
 
@@ -154,7 +162,7 @@ export default function ATSDashboard() {
   const handleExecuteSearch = async (queryText: string, filters: SearchFilters) => {
     setLoadingSearch(true);
     setActiveQuery(queryText);
-    setMobileTab("ranking"); // auto-switch to ranking view on mobile
+    setMobileTab("ranking");
 
     try {
       const res = await fetch("/api/candidates/search", {
@@ -214,19 +222,16 @@ export default function ATSDashboard() {
   };
 
   /**
-   * Disconnect active Gmail account
+   * Disconnect active Gmail account (returns directly to Login Wall)
    */
   const handleDisconnectAccount = async () => {
     try {
       const res = await fetch("/api/auth/gmail/disconnect", { method: "POST" });
       if (res.ok) {
         setAccountEmail(null);
+        setEmails([]);
+        setRankedCandidates([]);
         await fetchSyncStatus();
-        setBannerMessage({
-          type: "success",
-          text: "Cuenta desvinculada exitosamente. Puedes hacer clic en 'Conectar Gmail' para asociar otra cuenta.",
-        });
-        setTimeout(() => setBannerMessage(null), 5000);
       }
     } catch (err: any) {
       setBannerMessage({
@@ -286,26 +291,21 @@ export default function ATSDashboard() {
     if (urlParams.get("auth_success")) {
       setBannerMessage({
         type: "success",
-        text: `¡Cuenta de Gmail vinculada exitosamente (${urlParams.get("email") || "Conectada"})!`,
+        text: `¡Cuenta vinculada exitosamente (${urlParams.get("email") || "Conectada"})!`,
       });
       setTimeout(() => setBannerMessage(null), 6000);
     } else if (urlParams.get("auth_error")) {
-      setBannerMessage({
-        type: "error",
-        text: `Error al autenticar con Gmail: ${urlParams.get("auth_error")}`,
-      });
+      setAuthError(urlParams.get("auth_error"));
     }
 
     fetchSyncStatus();
     fetchEmailFeed();
 
-    // Initial search
     handleExecuteSearch(
       "Desarrollador con experiencia técnica, proactivo y buen nivel de comunicación",
       { includeHistorical: true }
     );
 
-    // Polling interval (every 6 seconds) for real-time status & incoming emails
     const interval = setInterval(() => {
       fetchSyncStatus();
       fetchEmailFeed();
@@ -314,6 +314,28 @@ export default function ATSDashboard() {
     return () => clearInterval(interval);
   }, [fetchSyncStatus, fetchEmailFeed]);
 
+  // 1. Initial authentication loading state
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen w-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-[#090d16] text-slate-900 dark:text-slate-100">
+        <Loader2 className="w-8 h-8 animate-spin text-indigo-600 dark:text-indigo-400 mb-3" />
+        <p className="text-xs text-slate-500 font-medium">Verificando sesión segura...</p>
+      </div>
+    );
+  }
+
+  // 2. Security Login Wall: If not authenticated with Google, block entry completely!
+  if (!accountEmail) {
+    return (
+      <LoginWall
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        errorMessage={authError}
+      />
+    );
+  }
+
+  // 3. Authenticated: Render Full Dashboard
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100 dark:bg-[#090d16] text-slate-900 dark:text-slate-100 transition-colors">
       {/* Top Navigation */}
@@ -348,7 +370,7 @@ export default function ATSDashboard() {
         </div>
       )}
 
-      {/* Mobile Tab Switcher (Visible only on screens < md) */}
+      {/* Mobile Tab Switcher */}
       <div className="flex md:hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-2 py-1.5 space-x-1 text-xs">
         <button
           onClick={() => setMobileTab("feed")}
@@ -389,7 +411,7 @@ export default function ATSDashboard() {
 
       {/* 3-Panel Main Layout */}
       <main className="flex-1 overflow-hidden">
-        {/* DESKTOP VIEW: 3 columns side-by-side (hidden on mobile) */}
+        {/* DESKTOP VIEW: 3 columns side-by-side */}
         <div className="hidden md:grid md:grid-cols-12 h-full overflow-hidden">
           {/* PANEL 1: Left Feed (3 cols) */}
           <div className="col-span-3 h-full overflow-hidden">
@@ -425,7 +447,7 @@ export default function ATSDashboard() {
           </div>
         </div>
 
-        {/* MOBILE VIEW: Render only the active tab full-screen */}
+        {/* MOBILE VIEW */}
         <div className="block md:hidden h-full overflow-hidden">
           {mobileTab === "feed" && (
             <LeftPanelFeed
