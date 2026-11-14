@@ -33,6 +33,7 @@ export default function ATSDashboard() {
   });
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const [loadingFeed, setLoadingFeed] = useState<boolean>(true);
+  const [isSyncingBatch, setIsSyncingBatch] = useState<boolean>(false);
 
   // Search & Candidates Ranking States
   const [rankedCandidates, setRankedCandidates] = useState<CandidateSearchResponseItem[]>([]);
@@ -99,11 +100,11 @@ export default function ATSDashboard() {
   }, []);
 
   /**
-   * Fetch email feed
+   * Fetch email feed (including dismissed items so user can switch between tabs instantly)
    */
   const fetchEmailFeed = useCallback(async () => {
     try {
-      const res = await fetch("/api/emails?limit=60");
+      const res = await fetch("/api/emails?limit=100&showDismissed=true");
       if (res.ok) {
         const data = await res.json();
         setEmails(data.emails || []);
@@ -116,20 +117,42 @@ export default function ATSDashboard() {
   }, []);
 
   /**
-   * Dismiss single email
+   * Hide / dismiss single email
    */
   const handleDismissEmail = async (emailId: string) => {
     try {
       const res = await fetch("/api/emails", {
-        method: "DELETE",
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailId }),
+        body: JSON.stringify({ emailId, isDismissed: true }),
       });
       if (res.ok) {
-        setEmails((prev) => prev.filter((e) => e.id !== emailId));
+        setEmails((prev) =>
+          prev.map((e) => (e.id === emailId ? { ...e, isDismissed: true } : e))
+        );
       }
     } catch (err) {
       console.error("Error dismissing email:", err);
+    }
+  };
+
+  /**
+   * Restore / unhide single email
+   */
+  const handleRestoreEmail = async (emailId: string) => {
+    try {
+      const res = await fetch("/api/emails", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailId, isDismissed: false }),
+      });
+      if (res.ok) {
+        setEmails((prev) =>
+          prev.map((e) => (e.id === emailId ? { ...e, isDismissed: false } : e))
+        );
+      }
+    } catch (err) {
+      console.error("Error restoring email:", err);
     }
   };
 
@@ -144,15 +167,40 @@ export default function ATSDashboard() {
         body: JSON.stringify({ dismissAllDiscarded: true }),
       });
       if (res.ok) {
-        setEmails((prev) => prev.filter((e) => e.status !== "DISCARDED"));
+        setEmails((prev) =>
+          prev.map((e) => (e.status === "DISCARDED" ? { ...e, isDismissed: true } : e))
+        );
         setBannerMessage({
           type: "success",
-          text: "Se han ocultado todos los correos que no son CVs de la bandeja.",
+          text: "Se han ocultado todos los correos descartados (puedes verlos o restaurarlos en la pestaña 'Ocultos').",
         });
         setTimeout(() => setBannerMessage(null), 4000);
       }
     } catch (err) {
       console.error("Error dismissing all discarded emails:", err);
+    }
+  };
+
+  /**
+   * Restore all hidden emails
+   */
+  const handleRestoreAllDismissed = async () => {
+    try {
+      const res = await fetch("/api/emails", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restoreAll: true }),
+      });
+      if (res.ok) {
+        setEmails((prev) => prev.map((e) => ({ ...e, isDismissed: false })));
+        setBannerMessage({
+          type: "success",
+          text: "Se han restaurado todos los correos ocultos a la bandeja principal.",
+        });
+        setTimeout(() => setBannerMessage(null), 4000);
+      }
+    } catch (err) {
+      console.error("Error restoring all emails:", err);
     }
   };
 
@@ -195,10 +243,44 @@ export default function ATSDashboard() {
   };
 
   /**
+   * Runs a single bounded batch of email sync
+   */
+  const runSyncBatch = useCallback(async () => {
+    if (isSyncingBatch) return null;
+    setIsSyncingBatch(true);
+    try {
+      const res = await fetch("/api/sync/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "batch" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.syncState) {
+          setSyncState(data.syncState);
+        }
+        await fetchEmailFeed();
+        return data;
+      }
+    } catch (err) {
+      console.warn("Batch sync error:", err);
+    } finally {
+      setIsSyncingBatch(false);
+    }
+    return null;
+  }, [isSyncingBatch, fetchEmailFeed]);
+
+  /**
    * Toggle backfill worker (start, pause, reset)
    */
   const handleToggleBackfill = async (action: "start" | "pause" | "reset") => {
     try {
+      if (action === "pause") {
+        setSyncState((prev) => ({ ...prev, status: "PAUSED" }));
+      } else if (action === "start" || action === "reset") {
+        setSyncState((prev) => ({ ...prev, status: "RUNNING" }));
+      }
+
       const res = await fetch("/api/sync/backfill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -206,8 +288,12 @@ export default function ATSDashboard() {
       });
 
       if (res.ok) {
-        await fetchSyncStatus();
+        const data = await res.json();
+        if (data.syncState) {
+          setSyncState(data.syncState);
+        }
         await fetchEmailFeed();
+
         if (action === "reset") {
           setBannerMessage({
             type: "success",
@@ -317,6 +403,22 @@ export default function ATSDashboard() {
     return () => clearInterval(interval);
   }, [fetchSyncStatus, fetchEmailFeed]);
 
+  // Reactive runner: while syncState.status is RUNNING, sequentially process batches
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+
+    if (syncState.status === "RUNNING" && !isSyncingBatch) {
+      timeoutId = setTimeout(async () => {
+        const res = await runSyncBatch();
+        if (res && (!res.hasMore || res.status === "COMPLETED")) {
+          fetchSyncStatus();
+        }
+      }, 1000);
+    }
+
+    return () => clearTimeout(timeoutId);
+  }, [syncState.status, isSyncingBatch, runSyncBatch, fetchSyncStatus]);
+
   // 1. Initial authentication loading state
   if (checkingAuth) {
     return (
@@ -422,10 +524,13 @@ export default function ATSDashboard() {
               emails={emails}
               syncState={syncState}
               loading={loadingFeed}
+              isSyncingBatch={isSyncingBatch}
               onSelectCandidate={handleSelectCandidateFromFeed}
               onToggleBackfill={handleToggleBackfill}
               onDismissEmail={handleDismissEmail}
+              onRestoreEmail={handleRestoreEmail}
               onDismissAllDiscarded={handleDismissAllDiscarded}
+              onRestoreAllDismissed={handleRestoreAllDismissed}
               onRefresh={fetchEmailFeed}
             />
           </div>
@@ -457,10 +562,13 @@ export default function ATSDashboard() {
               emails={emails}
               syncState={syncState}
               loading={loadingFeed}
+              isSyncingBatch={isSyncingBatch}
               onSelectCandidate={handleSelectCandidateFromFeed}
               onToggleBackfill={handleToggleBackfill}
               onDismissEmail={handleDismissEmail}
+              onRestoreEmail={handleRestoreEmail}
               onDismissAllDiscarded={handleDismissAllDiscarded}
+              onRestoreAllDismissed={handleRestoreAllDismissed}
               onRefresh={fetchEmailFeed}
             />
           )}

@@ -9,15 +9,21 @@ export async function GET(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams;
     const statusParam = searchParams.get("status") || "ALL";
     const searchQuery = searchParams.get("search") || "";
+    const showDismissed = searchParams.get("showDismissed") === "true";
+    const onlyDismissed = searchParams.get("onlyDismissed") === "true";
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "30", 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "60", 10)));
     const skip = (page - 1) * limit;
 
-    const where: Prisma.EmailWhereInput = {
-      isDismissed: false, // Never return dismissed/deleted emails
-    };
+    const where: Prisma.EmailWhereInput = {};
 
-    if (statusParam !== "ALL") {
+    if (onlyDismissed || statusParam === "DISMISSED") {
+      where.isDismissed = true;
+    } else if (!showDismissed) {
+      where.isDismissed = false;
+    }
+
+    if (statusParam !== "ALL" && statusParam !== "DISMISSED") {
       where.status = statusParam as EmailStatus;
     }
 
@@ -69,7 +75,39 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// Allows dismissing / deleting single or all discarded emails
+// Allows toggling dismissed state or restoring emails
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const { emailId, isDismissed, restoreAll } = body;
+
+    if (restoreAll) {
+      const res = await prisma.email.updateMany({
+        where: { isDismissed: true },
+        data: { isDismissed: false },
+      });
+      return NextResponse.json({ success: true, count: res.count });
+    }
+
+    if (!emailId) {
+      return NextResponse.json({ error: "Missing emailId" }, { status: 400 });
+    }
+
+    const updated = await prisma.email.update({
+      where: { id: emailId },
+      data: { isDismissed: Boolean(isDismissed) },
+    });
+
+    return NextResponse.json({ success: true, email: updated });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: "Failed to update email dismiss state", message: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// Allows dismissing single or all discarded emails
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));

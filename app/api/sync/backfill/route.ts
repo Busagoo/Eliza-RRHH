@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runHistoricalBackfill, pauseBackfillWorker } from "@/lib/workers/backfillWorker";
+import { processBackfillBatch, pauseBackfillWorker } from "@/lib/workers/backfillWorker";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -7,31 +7,30 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const action = body.action || "start";
+    const action = body.action || "batch";
 
     if (action === "pause") {
       await pauseBackfillWorker(body.syncStateId);
-      return NextResponse.json({ success: true, message: "Backfill worker paused" });
+      return NextResponse.json({ success: true, message: "Sincronización pausada" });
     }
 
-    if (action === "start" || action === "resume" || action === "reset") {
-      const result = await runHistoricalBackfill({
+    if (action === "start" || action === "resume" || action === "batch" || action === "reset") {
+      const result = await processBackfillBatch({
         queryFilter: body.queryFilter,
         reset: action === "reset",
-        batchSize: body.batchSize,
+        batchSize: body.batchSize || 8,
       });
 
       return NextResponse.json({
         success: true,
-        status: result.status,
-        message: result.status === "started" ? "Backfill worker started in background" : "Worker already active",
+        ...result,
       });
     }
 
-    return NextResponse.json({ error: "Invalid action. Use start, pause, resume, or reset" }, { status: 400 });
+    return NextResponse.json({ error: "Acción inválida. Usa start, pause, resume, batch o reset" }, { status: 400 });
   } catch (error: any) {
     return NextResponse.json(
-      { error: "Backfill control failed", message: error.message },
+      { error: "Error en el control de sincronización", message: error.message },
       { status: 500 }
     );
   }

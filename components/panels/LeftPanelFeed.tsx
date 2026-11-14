@@ -14,6 +14,9 @@ import {
   Paperclip,
   Trash2,
   Sparkles,
+  Eye,
+  EyeOff,
+  RefreshCw,
 } from "lucide-react";
 
 export interface EmailItem {
@@ -26,6 +29,7 @@ export interface EmailItem {
   snippet?: string | null;
   receivedAt: string | Date;
   status: "PENDING" | "PROCESSING" | "PROCESSED" | "DISCARDED" | "ERROR";
+  isDismissed?: boolean;
   hasAttachment: boolean;
   attachmentFilename?: string | null;
   discardReason?: string | null;
@@ -53,10 +57,13 @@ interface LeftPanelFeedProps {
   emails: EmailItem[];
   syncState: SyncStateData;
   loading?: boolean;
+  isSyncingBatch?: boolean;
   onSelectCandidate?: (candidateId: string) => void;
   onToggleBackfill?: (action: "start" | "pause" | "reset") => void;
   onDismissEmail?: (emailId: string) => Promise<void>;
+  onRestoreEmail?: (emailId: string) => Promise<void>;
   onDismissAllDiscarded?: () => Promise<void>;
+  onRestoreAllDismissed?: () => Promise<void>;
   onRefresh?: () => void;
 }
 
@@ -64,18 +71,30 @@ export function LeftPanelFeed({
   emails,
   syncState,
   loading = false,
+  isSyncingBatch = false,
   onSelectCandidate,
   onToggleBackfill,
   onDismissEmail,
+  onRestoreEmail,
   onDismissAllDiscarded,
+  onRestoreAllDismissed,
   onRefresh,
 }: LeftPanelFeedProps) {
-  const [filterTab, setFilterTab] = useState<"ALL" | "PROCESSED" | "PROCESSING" | "DISCARDED">("ALL");
+  const [filterTab, setFilterTab] = useState<"ALL" | "PROCESSED" | "PROCESSING" | "DISCARDED" | "DISMISSED">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
   const [cleaning, setCleaning] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const filteredEmails = emails.filter((mail) => {
-    if (filterTab !== "ALL" && mail.status !== filterTab) return false;
+    // Dismissed filtering
+    if (filterTab === "DISMISSED") {
+      if (!mail.isDismissed) return false;
+    } else {
+      // In all other tabs, don't show dismissed unless on DISMISSED tab
+      if (mail.isDismissed) return false;
+      if (filterTab !== "ALL" && mail.status !== filterTab) return false;
+    }
+
     if (!searchTerm.trim()) return true;
 
     const term = searchTerm.toLowerCase();
@@ -112,9 +131,21 @@ export function LeftPanelFeed({
     }
   };
 
+  const handleRestoreAll = async () => {
+    if (!onRestoreAllDismissed) return;
+    setRestoring(true);
+    try {
+      await onRestoreAllDismissed();
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const totalScanned = syncState.totalScanned || 0;
   const totalResumes = syncState.totalResumesFound || 0;
   const progressPercent = Math.min(100, Math.round((totalResumes / Math.max(1, totalScanned)) * 100));
+
+  const countDismissed = emails.filter((e) => e.isDismissed).length;
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950/60 border-r border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 overflow-hidden transition-colors">
@@ -133,9 +164,21 @@ export function LeftPanelFeed({
               onClick={handleCleanDiscarded}
               disabled={cleaning}
               className="text-[10px] px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 hover:bg-rose-200 transition font-medium disabled:opacity-50"
-              title="Borrar todos los correos descartados para limpiar la vista"
+              title="Ocultar todos los descartados de la lista principal"
             >
-              {cleaning ? "Limpiando..." : "Limpiar descartados"}
+              {cleaning ? "Ocultando..." : "Ocultar descartados"}
+            </button>
+          )}
+
+          {filterTab === "DISMISSED" && onRestoreAllDismissed && countDismissed > 0 && (
+            <button
+              onClick={handleRestoreAll}
+              disabled={restoring}
+              className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 transition font-medium disabled:opacity-50 flex items-center space-x-1"
+              title="Restaurar todos los correos ocultos"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              <span>{restoring ? "Restaurando..." : "Restaurar todos"}</span>
             </button>
           )}
 
@@ -160,13 +203,18 @@ export function LeftPanelFeed({
             />
             <span className="text-slate-700 dark:text-slate-300 font-medium text-[11px]">
               {syncState.status === "RUNNING"
-                ? "Sincronizando bandeja Gmail..."
+                ? isSyncingBatch
+                  ? "Leyendo correos de Gmail..."
+                  : "Sincronizando bandeja..."
                 : syncState.status === "COMPLETED"
                 ? "Bandeja sincronizada"
                 : syncState.status === "PAUSED"
                 ? "Sincronización en pausa"
                 : "Listo para sincronizar"}
             </span>
+            {isSyncingBatch && (
+              <RefreshCw className="w-3 h-3 animate-spin text-indigo-500 ml-1" />
+            )}
           </div>
 
           {/* Sync controls */}
@@ -191,7 +239,7 @@ export function LeftPanelFeed({
             <button
               onClick={() => onToggleBackfill && onToggleBackfill("reset")}
               className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 hover:text-indigo-500 transition"
-              title="Reiniciar sincronización desde los correos más nuevos del inicio"
+              title="Reiniciar sincronización desde el inicio de la bandeja"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -228,7 +276,7 @@ export function LeftPanelFeed({
         </div>
 
         {/* Status Filter Tabs */}
-        <div className="flex space-x-1 text-[11px] font-medium">
+        <div className="flex flex-wrap gap-1 text-[11px] font-medium">
           <button
             onClick={() => setFilterTab("ALL")}
             className={`px-2 py-1 rounded transition ${
@@ -272,6 +320,18 @@ export function LeftPanelFeed({
             <XCircle className="w-3 h-3" />
             <span>No es CV</span>
           </button>
+          <button
+            onClick={() => setFilterTab("DISMISSED")}
+            className={`px-2 py-1 rounded transition flex items-center space-x-1 ${
+              filterTab === "DISMISSED"
+                ? "bg-purple-700 text-white font-semibold shadow-sm"
+                : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-purple-600"
+            }`}
+            title="Correos que fueron ocultados"
+          >
+            <EyeOff className="w-3 h-3" />
+            <span>Ocultos {countDismissed > 0 && `(${countDismissed})`}</span>
+          </button>
         </div>
       </div>
 
@@ -285,7 +345,11 @@ export function LeftPanelFeed({
         ) : filteredEmails.length === 0 ? (
           <div className="p-8 text-center text-slate-400 text-xs space-y-2">
             <Inbox className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
-            <p>No hay correos en esta sección.</p>
+            <p>
+              {filterTab === "DISMISSED"
+                ? "No hay correos ocultos."
+                : "No hay correos en esta sección."}
+            </p>
           </div>
         ) : (
           filteredEmails.map((email) => {
@@ -295,22 +359,31 @@ export function LeftPanelFeed({
             return (
               <div
                 key={email.id}
-                className="p-3 transition-colors bg-white dark:bg-transparent hover:bg-slate-100/70 dark:hover:bg-slate-900/40 relative group"
+                className={`p-3 transition-colors bg-white dark:bg-transparent hover:bg-slate-100/70 dark:hover:bg-slate-900/40 relative group ${
+                  email.isDismissed ? "opacity-75 bg-slate-50/50 dark:bg-slate-900/20" : ""
+                }`}
               >
-                {/* Top Row: Sender, Date & Quick Dismiss */}
+                {/* Top Row: Sender, Date & Visibility Action */}
                 <div className="flex items-start justify-between gap-1 mb-1">
-                  <span
-                    onClick={() => {
-                      if (email.candidate?.id && onSelectCandidate) {
-                        onSelectCandidate(email.candidate.id);
-                      }
-                    }}
-                    className={`text-xs font-semibold text-slate-900 dark:text-slate-200 truncate ${
-                      isClickable ? "cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400" : ""
-                    }`}
-                  >
-                    {email.candidate?.fullName || email.senderName || email.sender}
-                  </span>
+                  <div className="flex items-center space-x-1.5 truncate">
+                    <span
+                      onClick={() => {
+                        if (email.candidate?.id && onSelectCandidate) {
+                          onSelectCandidate(email.candidate.id);
+                        }
+                      }}
+                      className={`text-xs font-semibold text-slate-900 dark:text-slate-200 truncate ${
+                        isClickable ? "cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400" : ""
+                      }`}
+                    >
+                      {email.candidate?.fullName || email.senderName || email.sender}
+                    </span>
+                    {email.isDismissed && (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
+                        Oculto
+                      </span>
+                    )}
+                  </div>
 
                   <div className="flex items-center space-x-1.5 flex-shrink-0">
                     <span
@@ -324,14 +397,25 @@ export function LeftPanelFeed({
                       {dateDisplay}
                     </span>
 
-                    {/* Dismiss / Delete button */}
-                    {onDismissEmail && (
+                    {/* Unhide / Restore button if dismissed */}
+                    {email.isDismissed && onRestoreEmail && (
+                      <button
+                        onClick={() => onRestoreEmail(email.id)}
+                        className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 p-0.5 rounded transition"
+                        title="Desocultar / Restaurar correo a la bandeja principal"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {/* Hide button if not dismissed */}
+                    {!email.isDismissed && onDismissEmail && (
                       <button
                         onClick={() => onDismissEmail(email.id)}
                         className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-0.5 rounded transition"
-                        title="Ocultar este correo para que no vuelva a aparecer"
+                        title="Ocultar este correo (podrás desocultarlo desde la pestaña Ocultos)"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <EyeOff className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
