@@ -307,9 +307,12 @@ export default function ATSDashboard() {
     );
 
     const interval = setInterval(() => {
-      fetchSyncStatus();
-      fetchEmailFeed();
-    }, 6000);
+      // Throttle polling: only refresh feed & status if document is active/visible
+      if (document.visibilityState === "visible") {
+        fetchSyncStatus();
+        fetchEmailFeed();
+      }
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [fetchSyncStatus, fetchEmailFeed]);

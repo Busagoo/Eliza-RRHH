@@ -11,16 +11,26 @@ function getPrismaClient(): PrismaClient {
     return globalThis.prismaGlobal;
   }
 
-  const dbUrl = getEnv("DATABASE_URL") || process.env.DATABASE_URL;
+  let dbUrl = getEnv("DATABASE_URL") || process.env.DATABASE_URL || "";
+
+  // Ensure connection limits and pooling flags for Supabase pooler in serverless environments
+  if (dbUrl && dbUrl.includes("pooler.supabase.com")) {
+    if (!dbUrl.includes("connection_limit")) {
+      const separator = dbUrl.includes("?") ? "&" : "?";
+      dbUrl = `${dbUrl}${separator}connection_limit=1`;
+    }
+    if (dbUrl.includes(":6543") && !dbUrl.includes("pgbouncer=true")) {
+      dbUrl = `${dbUrl}&pgbouncer=true`;
+    }
+  }
 
   const client = new PrismaClient({
     datasources: dbUrl ? { db: { url: dbUrl } } : undefined,
     log: getEnv("NODE_ENV") === "development" ? ["warn", "error"] : ["error"],
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalThis.prismaGlobal = client;
-  }
+  // Always cache client on globalThis to prevent connection leaks across lambdas
+  globalThis.prismaGlobal = client;
 
   return client;
 }
