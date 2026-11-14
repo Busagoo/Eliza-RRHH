@@ -1,0 +1,134 @@
+// Prisma Schema for RRHH ELIZA - Intelligent ATS
+// Supports PostgreSQL with pgvector for semantic candidate search
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+enum SyncStatus {
+  IDLE
+  RUNNING
+  PAUSED
+  COMPLETED
+  ERROR
+}
+
+enum EmailStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  DISCARDED
+  ERROR
+}
+
+model Account {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  accessToken  String?     @db.Text
+  refreshToken String      @db.Text
+  expiresAt    DateTime?
+  tokenType    String?     @default("Bearer")
+  scope        String?     @db.Text
+  syncStates   SyncState[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@map("accounts")
+}
+
+model SyncState {
+  id                String     @id @default(uuid())
+  accountId         String?
+  account           Account?   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  status            SyncStatus @default(IDLE)
+  nextPageToken     String?    @db.Text
+  lastHistoryId     String?
+  totalScanned      Int        @default(0)
+  totalResumesFound Int        @default(0)
+  totalDiscarded    Int        @default(0)
+  totalErrors       Int        @default(0)
+  lastError         String?    @db.Text
+  queryFilter       String?    @db.Text
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@map("sync_states")
+}
+
+model Email {
+  id                 String      @id @default(uuid())
+  gmailMessageId     String      @unique
+  gmailThreadId      String?
+  sender             String
+  senderEmail        String?
+  senderName         String?
+  recipient          String?
+  subject            String
+  snippet            String?     @db.Text
+  bodyText           String?     @db.Text
+  receivedAt         DateTime
+  status             EmailStatus @default(PENDING)
+  hasAttachment      Boolean     @default(false)
+  attachmentFilename String?
+  attachmentMimeType String?
+  attachmentSize     Int?
+  discardReason      String?     @db.Text
+  errorMessage       String?     @db.Text
+  isDismissed        Boolean     @default(false)
+  candidate          Candidate?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([receivedAt(sort: Desc)])
+  @@index([status])
+  @@index([senderEmail])
+  @@map("emails")
+}
+
+model Candidate {
+  id              String                        @id @default(uuid())
+  emailId         String                        @unique
+  email           Email                         @relation(fields: [emailId], references: [id], onDelete: Cascade)
+  fullName        String
+  contactEmail    String?
+  phone           String?
+  location        String?
+  seniority       String?                       // Junior, Mid, Senior, Lead, etc.
+  experienceYears Int                           @default(0)
+  skills          String[]
+  languages       Json                          // Array of { language: string, level: string }
+  parsedData      Json                          // Complete structured resume (workHistory, education, summary)
+  resumeFileUrl   String?
+  resumeText      String?                       @db.Text
+  embedding       Unsupported("vector(1536)")?
+  receivedAt      DateTime                      // Original date the CV was received (e.g. 2024)
+  createdAt       DateTime                      @default(now())
+  updatedAt       DateTime                      @updatedAt
+
+  @@index([fullName])
+  @@index([experienceYears])
+  @@index([receivedAt(sort: Desc)])
+  @@index([seniority])
+  @@map("candidates")
+}
+
+model SearchQuery {
+  id              String   @id @default(uuid())
+  queryText       String   @db.Text
+  filters         Json?    // { minExp, seniority, requiredSkills, dateRange, includeHistorical }
+  resultsCount    Int      @default(0)
+  topCandidateIds String[]
+  createdAt       DateTime @default(now())
+
+  @@map("search_queries")
+}
