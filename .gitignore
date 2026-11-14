@@ -7,6 +7,9 @@
 /.next/
 /out/
 /build
+/.open-next/
+/.wrangler/
+.dev.vars
 
 # Environment Files (Keep secrets secure)
 .env

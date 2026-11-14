@@ -22,6 +22,29 @@ const s3Client = s3Configured
     })
   : null;
 
+// Supabase Native REST Storage Config
+function getSupabaseConfig() {
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY;
+
+  let supabaseUrl = process.env.SUPABASE_URL;
+  if (!supabaseUrl && process.env.DATABASE_URL) {
+    const match = process.env.DATABASE_URL.match(/@db\.([a-z0-9]+)\.supabase\.co/);
+    if (match && match[1]) {
+      supabaseUrl = `https://${match[1]}.supabase.co`;
+    }
+  }
+
+  const bucket =
+    process.env.SUPABASE_STORAGE_BUCKET ||
+    process.env.S3_BUCKET_NAME ||
+    "resumes";
+
+  return { supabaseKey, supabaseUrl, bucket };
+}
+
 /**
  * Uploads a candidate resume attachment (PDF or DOCX) to S3/R2/Supabase,
  * or saves to a local public directory if S3 credentials are not yet set.
@@ -33,7 +56,39 @@ export async function uploadResume(
   mimeType: string
 ): Promise<string> {
   const extension = path.extname(originalFilename).toLowerCase() || ".pdf";
-  const uniqueKey = `resumes/${Date.now()}-${crypto.randomBytes(8).toString("hex")}${extension}`;
+  const uniqueKey = `cv-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
+
+  // 1. Supabase Native REST Storage
+  if (process.env.STORAGE_PROVIDER === "supabase") {
+    const { supabaseKey, supabaseUrl, bucket } = getSupabaseConfig();
+    if (supabaseKey && supabaseUrl) {
+      try {
+        const uploadEndpoint = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/${bucket}/${uniqueKey}`;
+        const response = await fetch(uploadEndpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": mimeType || "application/pdf",
+            "x-upsert": "true",
+          },
+          body: new Uint8Array(buffer),
+        });
+
+        if (response.ok) {
+          const publicUrl = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/${uniqueKey}`;
+          console.log(`[Storage] Uploaded resume to Supabase Storage: ${publicUrl}`);
+          return publicUrl;
+        } else {
+          const errorMsg = await response.text();
+          console.error(`[Storage] Supabase upload returned ${response.status}: ${errorMsg}`);
+        }
+      } catch (err) {
+        console.error("[Storage] Error uploading to Supabase Storage:", err);
+      }
+    }
+  }
+
+  // 2. S3 / R2 / S3-compatible Supabase endpoint
 
   if (s3Client && process.env.S3_BUCKET_NAME) {
     try {
