@@ -6,7 +6,7 @@ import {
   ParsedGmailMessage,
 } from "../gmail/service";
 import { classifyEmailForResume } from "../ai/classifier";
-import { parseResumeText } from "../ai/parser";
+import { parseResumeText, isBlacklistedName } from "../ai/parser";
 import {
   generateEmbedding,
   buildCandidateEmbeddingText,
@@ -59,10 +59,8 @@ export async function processSingleEmail(
         existingEmail.hasAttachment &&
         (!existingEmail.candidate.resumeText ||
           existingEmail.candidate.resumeText === "Sin texto extraído." ||
+          isBlacklistedName(existingEmail.candidate.fullName) ||
           existingEmail.candidate.fullName.startsWith("%PDF") ||
-          existingEmail.candidate.fullName === "SISTEMAS" ||
-          existingEmail.candidate.fullName === "PROFILE" ||
-          existingEmail.candidate.fullName === "Resumen profesional" ||
           (existingEmail.candidate.skills?.length === 0 && (!existingEmail.candidate.experienceYears || existingEmail.candidate.experienceYears === 0)));
 
       if (!isCorrupted) {
@@ -208,6 +206,8 @@ export async function processSingleEmail(
       sender: details.sender,
       subject: details.subject,
       senderEmail: details.senderEmail,
+      senderName: details.senderName,
+      filename: primaryAttachment?.filename,
     });
 
     // -------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { CandidateSearchResponseItem } from "@/app/api/candidates/search/route";
+import { SearchLoadingScreen } from "@/components/ui/SearchLoadingScreen";
 
 export interface JobFolderItem {
   id: string;
@@ -335,15 +336,7 @@ export function CentralPanelRanking({
       {/* Content Feed */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {loading ? (
-          <div className="py-20 text-center text-slate-500 dark:text-slate-400 text-xs space-y-3">
-            <div className="w-10 h-10 border-2 border-indigo-600 dark:border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="font-medium text-slate-800 dark:text-slate-300">
-              Evaluando perfiles con IA y vectores semánticos...
-            </p>
-            <p className="text-[11px] text-slate-500">
-              Calibrando afinidad de habilidades y experiencia
-            </p>
-          </div>
+          <SearchLoadingScreen activeQuery={activeQuery} />
         ) : filteredCandidates.length === 0 ? (
           <div className="py-20 text-center text-slate-500 dark:text-slate-400 text-xs space-y-3 border border-dashed border-slate-300 dark:border-slate-800 rounded-xl p-8 bg-white dark:bg-transparent">
             <Briefcase className="w-10 h-10 mx-auto text-slate-400 dark:text-slate-600" />

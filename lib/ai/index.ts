@@ -41,6 +41,18 @@ export function getActiveProvider(): "groq" | "openai" | "gemini" | "mock" {
   return "mock";
 }
 
+function cleanJsonString(raw: string): string {
+  if (!raw) return "{}";
+  let cleaned = raw.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  return cleaned;
+}
+
 /**
  * Executes a structured JSON prompt with Groq, OpenAI, or Gemini,
  * parsing and validating the response against TypeScript interfaces.
@@ -71,7 +83,7 @@ export async function generateStructuredJSON<T>(
       temperature: 0.1,
     });
 
-    const content = response.choices[0]?.message?.content || "{}";
+    const content = cleanJsonString(response.choices[0]?.message?.content || "{}");
     return JSON.parse(content) as T;
   }
 
@@ -88,7 +100,7 @@ export async function generateStructuredJSON<T>(
       temperature: 0.1,
     });
 
-    const content = response.choices[0]?.message?.content || "{}";
+    const content = cleanJsonString(response.choices[0]?.message?.content || "{}");
     return JSON.parse(content) as T;
   }
 
@@ -102,7 +114,7 @@ export async function generateStructuredJSON<T>(
 
     const prompt = `${systemPrompt}\n\nStrict JSON requirement: Return only valid JSON.\n\nInput Data:\n${userPrompt}`;
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const text = cleanJsonString(result.response.text());
     return JSON.parse(text) as T;
   }
 
