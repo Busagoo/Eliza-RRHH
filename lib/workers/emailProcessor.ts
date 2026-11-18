@@ -35,7 +35,8 @@ export interface ProcessEmailResult {
 export async function processSingleEmail(
   gmail: gmail_v1.Gmail,
   messageId: string,
-  preloadedDetails?: ParsedGmailMessage
+  preloadedDetails?: ParsedGmailMessage,
+  accountEmail?: string
 ): Promise<ProcessEmailResult> {
   // 1. Check if email already processed or dismissed
   const existingEmail = await prisma.email.findUnique({
@@ -53,13 +54,15 @@ export async function processSingleEmail(
     }
 
     if (existingEmail.status === EmailStatus.PROCESSED && existingEmail.candidate) {
-      // If the candidate was previously created with empty text due to storage crash
-      // (resumeText is empty or "Sin texto extraído." or skills is empty despite having attachment),
-      // allow it to re-extract and re-parse so it is properly populated!
+      // If the candidate was previously created with corrupted or unparsed text
       const isCorrupted =
         existingEmail.hasAttachment &&
         (!existingEmail.candidate.resumeText ||
           existingEmail.candidate.resumeText === "Sin texto extraído." ||
+          existingEmail.candidate.fullName.startsWith("%PDF") ||
+          existingEmail.candidate.fullName === "SISTEMAS" ||
+          existingEmail.candidate.fullName === "PROFILE" ||
+          existingEmail.candidate.fullName === "Resumen profesional" ||
           (existingEmail.candidate.skills?.length === 0 && (!existingEmail.candidate.experienceYears || existingEmail.candidate.experienceYears === 0)));
 
       if (!isCorrupted) {
@@ -84,6 +87,7 @@ export async function processSingleEmail(
 
   // 2. Fetch full message details
   const details = preloadedDetails || (await getGmailMessageDetails(gmail, messageId));
+  const effectiveAccountEmail = accountEmail || details.recipient || undefined;
 
   // Determine primary CV attachment if available
   const cvExtensions = [".pdf", ".docx", ".doc"];
@@ -98,6 +102,7 @@ export async function processSingleEmail(
     create: {
       gmailMessageId: messageId,
       gmailThreadId: details.threadId,
+      accountEmail: effectiveAccountEmail,
       sender: details.sender,
       senderEmail: details.senderEmail,
       senderName: details.senderName,
@@ -114,6 +119,7 @@ export async function processSingleEmail(
     },
     update: {
       status: EmailStatus.PROCESSING,
+      accountEmail: effectiveAccountEmail || undefined,
     },
   });
 
@@ -228,6 +234,7 @@ export async function processSingleEmail(
       where: { emailId: emailRecord.id },
       create: {
         emailId: emailRecord.id,
+        accountEmail: effectiveAccountEmail || emailRecord.accountEmail || undefined,
         fullName: parsedProfile.fullName,
         contactEmail: parsedProfile.contactEmail || details.senderEmail,
         phone: parsedProfile.phone,
@@ -242,6 +249,7 @@ export async function processSingleEmail(
         receivedAt: details.receivedAt, // PRESERVES HISTORICAL DATE
       },
       update: {
+        accountEmail: effectiveAccountEmail || emailRecord.accountEmail || undefined,
         fullName: parsedProfile.fullName,
         contactEmail: parsedProfile.contactEmail || details.senderEmail,
         phone: parsedProfile.phone,

@@ -31,17 +31,24 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const [syncState, account, totalCandidates, emailCounts] = await Promise.all([
-      prisma.syncState.findFirst({
-        orderBy: { createdAt: "desc" },
+    const account = await prisma.account.findUnique({
+      where: { email: session.email },
+      select: { id: true, email: true, updatedAt: true },
+    });
+
+    const [syncState, totalCandidates, emailCounts] = await Promise.all([
+      account
+        ? prisma.syncState.findFirst({
+            where: { accountId: account.id },
+            orderBy: { createdAt: "desc" },
+          })
+        : null,
+      prisma.candidate.count({
+        where: { accountEmail: session.email },
       }),
-      prisma.account.findUnique({
-        where: { email: session.email },
-        select: { id: true, email: true, updatedAt: true },
-      }),
-      prisma.candidate.count(),
       prisma.email.groupBy({
         by: ["status"],
+        where: { accountEmail: session.email },
         _count: { id: true },
       }),
     ]);

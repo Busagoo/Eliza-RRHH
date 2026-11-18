@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processBackfillBatch, pauseBackfillWorker } from "@/lib/workers/backfillWorker";
 import { prisma } from "@/lib/db";
+import { getSessionFromRequest } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
+    const session = getSessionFromRequest(req);
     const body = await req.json().catch(() => ({}));
     const action = body.action || "batch";
 
@@ -16,6 +18,7 @@ export async function POST(req: NextRequest) {
 
     if (action === "start" || action === "resume" || action === "batch" || action === "reset") {
       const result = await processBackfillBatch({
+        accountId: session?.accountId,
         queryFilter: body.queryFilter,
         reset: action === "reset",
         batchSize: body.batchSize || 8,
@@ -36,8 +39,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const session = getSessionFromRequest(req);
   const syncState = await prisma.syncState.findFirst({
+    where: session?.accountId ? { accountId: session.accountId } : undefined,
     orderBy: { createdAt: "desc" },
   });
 

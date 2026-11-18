@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { EmailStatus, Prisma } from "@prisma/client";
+import { getSessionFromRequest } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
+    const session = getSessionFromRequest(req);
+    if (!session?.email) {
+      return NextResponse.json({ emails: [], total: 0, page: 1, totalPages: 0 });
+    }
+
     const searchParams = req.nextUrl.searchParams;
     const statusParam = searchParams.get("status") || "ALL";
     const searchQuery = searchParams.get("search") || "";
@@ -15,7 +21,9 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "60", 10)));
     const skip = (page - 1) * limit;
 
-    const where: Prisma.EmailWhereInput = {};
+    const where: Prisma.EmailWhereInput = {
+      accountEmail: session.email,
+    };
 
     if (onlyDismissed || statusParam === "DISMISSED") {
       where.isDismissed = true;

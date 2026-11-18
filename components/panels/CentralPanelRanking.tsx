@@ -350,12 +350,16 @@ export function CentralPanelRanking({
             <p className="text-slate-800 dark:text-slate-300 font-semibold">
               {selectedFolderId
                 ? "No hay candidatos asignados a esta carpeta de búsqueda"
-                : "No hay candidatos procesados aún"}
+                : activeQuery
+                ? "No se encontraron candidatos que coincidan con la búsqueda"
+                : "Listo para buscar y evaluar candidatos"}
             </p>
             <p className="text-slate-500 max-w-sm mx-auto text-[11px] leading-relaxed">
               {selectedFolderId
                 ? "Puedes asignar candidatos a esta carpeta usando el botón '+ Carpeta' en cada tarjeta de candidato."
-                : "Cuando recibas un correo con un currículum adjunto en tu Gmail, aparecerá automáticamente aquí evaluado por la IA."}
+                : activeQuery
+                ? "Prueba ajustando los filtros o utilizando términos más generales en el panel derecho."
+                : "Escribe los requerimientos del puesto en el panel derecho y presiona 'Analizar y Filtrar Candidatos' para clasificar los perfiles sin consumir tokens automáticamente."}
             </p>
           </div>
         ) : (

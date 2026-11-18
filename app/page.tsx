@@ -37,9 +37,7 @@ export default function ATSDashboard() {
 
   // Search & Candidates Ranking States
   const [rankedCandidates, setRankedCandidates] = useState<CandidateSearchResponseItem[]>([]);
-  const [activeQuery, setActiveQuery] = useState<string>(
-    "Desarrollador con experiencia técnica, proactivo y buen nivel de comunicación"
-  );
+  const [activeQuery, setActiveQuery] = useState<string>("");
   const [loadingSearch, setLoadingSearch] = useState<boolean>(false);
 
   // Modals
@@ -426,11 +424,6 @@ export default function ATSDashboard() {
 
     fetchSyncStatus();
     fetchEmailFeed();
-
-    handleExecuteSearch(
-      "Desarrollador con experiencia técnica, proactivo y buen nivel de comunicación",
-      { includeHistorical: true }
-    );
 
     const interval = setInterval(() => {
       // Throttle polling: only refresh feed & status if document is active/visible

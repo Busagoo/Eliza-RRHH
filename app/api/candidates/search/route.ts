@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { generateEmbedding, formatVectorForPg } from "@/lib/ai/embeddings";
 import { rerankCandidatesWithLLM, CandidateForReranking } from "@/lib/ai/reranker";
 import { Prisma } from "@prisma/client";
+import { getSessionFromRequest } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,9 @@ export interface CandidateSearchResponseItem {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = getSessionFromRequest(req);
+    const userAccountEmail = session?.email;
+
     const body = await req.json();
     const query = (body.query || "").trim();
     const filters = body.filters || {};
@@ -93,6 +97,10 @@ export async function POST(req: NextRequest) {
           AND ($3 = '%' OR seniority = $3)
           AND ($4::boolean = true OR "receivedAt" >= NOW() - INTERVAL '6 months')`;
 
+      if (userAccountEmail) {
+        rawQuery += ` AND "accountEmail" = '${userAccountEmail.replace(/'/g, "''")}'`;
+      }
+
       if (allowedCandidateIds && allowedCandidateIds.length > 0) {
         const idList = allowedCandidateIds.map((id) => `'${id}'`).join(",");
         rawQuery += ` AND id IN (${idList})`;
@@ -121,6 +129,10 @@ export async function POST(req: NextRequest) {
     // 3. Fallback relational query if pgvector is not initialized or yielded zero results
     if (candidatesForRerank.length === 0) {
       const where: Prisma.CandidateWhereInput = {};
+
+      if (userAccountEmail) {
+        where.accountEmail = userAccountEmail;
+      }
 
       if (allowedCandidateIds && allowedCandidateIds.length > 0) {
         where.id = { in: allowedCandidateIds };
@@ -160,6 +172,7 @@ export async function POST(req: NextRequest) {
       // If still empty due to strict filters, fetch top recent candidates to rank against
       if (candidatesForRerank.length === 0 && !folderId) {
         candidatesForRerank = await prisma.candidate.findMany({
+          where: userAccountEmail ? { accountEmail: userAccountEmail } : undefined,
           take: 30,
           orderBy: { receivedAt: "desc" },
         });

@@ -4,7 +4,8 @@ import { getEnv } from "../env";
 
 // 1. Dynamic AI Clients (evaluated lazily per request for Cloudflare / Serverless compatibility)
 export function getGroqClient(): OpenAI | null {
-  const apiKey = getEnv("GROQ_API_KEY")?.trim();
+  const rawKey = getEnv("GROQ_API_KEY") || process.env.GROQ_API_KEY;
+  const apiKey = rawKey?.trim().replace(/^['"]|['"]$/g, "");
   if (!apiKey) return null;
   return new OpenAI({
     apiKey,
@@ -54,9 +55,9 @@ export async function generateStructuredJSON<T>(
   const openAiClient = getOpenAiClient();
   const geminiClient = getGeminiClient();
 
-  // GROQ (Llama 3.3 70B / Llama 3.1 8B with JSON mode)
+  // GROQ (openai/gpt-oss-120b / openai/gpt-oss-20b with JSON mode)
   if (provider === "groq" && groqClient) {
-    const model = modelOverride || getEnv("GROQ_MODEL") || "llama-3.3-70b-versatile";
+    const model = modelOverride || getEnv("GROQ_MODEL") || "openai/gpt-oss-120b";
     const response = await groqClient.chat.completions.create({
       model,
       response_format: { type: "json_object" },
@@ -123,7 +124,7 @@ export async function generateCompletion(
   const geminiClient = getGeminiClient();
 
   if (provider === "groq" && groqClient) {
-    const model = modelOverride || getEnv("GROQ_MODEL_FAST") || "llama-3.1-8b-instant";
+    const model = modelOverride || getEnv("GROQ_MODEL_FAST") || "openai/gpt-oss-20b";
     const response = await groqClient.chat.completions.create({
       model,
       messages: [

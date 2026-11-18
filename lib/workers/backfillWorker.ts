@@ -31,9 +31,11 @@ export interface BackfillBatchResult {
  * and maintains atomic progress in PostgreSQL.
  */
 export async function processBackfillBatch(options: BackfillOptions = {}): Promise<BackfillBatchResult> {
-  const account = await prisma.account.findFirst({
-    orderBy: { updatedAt: "desc" },
-  });
+  const account = options.accountId
+    ? await prisma.account.findUnique({ where: { id: options.accountId } })
+    : await prisma.account.findFirst({
+        orderBy: { updatedAt: "desc" },
+      });
 
   const accountId = options.accountId || account?.id;
   if (!account) {
@@ -165,7 +167,7 @@ export async function processBackfillBatch(options: BackfillOptions = {}): Promi
   for (const msgRef of messages) {
     if (!msgRef.id) continue;
     try {
-      const res = await processSingleEmail(gmail, msgRef.id);
+      const res = await processSingleEmail(gmail, msgRef.id, undefined, account.email);
       processedInBatch++;
       if (res.status === EmailStatus.PROCESSED) {
         resumesInBatch++;

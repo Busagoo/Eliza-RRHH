@@ -69,6 +69,7 @@ model Email {
   id                 String      @id @default(uuid())
   gmailMessageId     String      @unique
   gmailThreadId      String?
+  accountEmail       String?
   sender             String
   senderEmail        String?
   senderName         String?
@@ -92,6 +93,7 @@ model Email {
   @@index([receivedAt(sort: Desc)])
   @@index([status])
   @@index([senderEmail])
+  @@index([accountEmail])
   @@map("emails")
 }
 
@@ -99,6 +101,7 @@ model Candidate {
   id              String                        @id @default(uuid())
   emailId         String                        @unique
   email           Email                         @relation(fields: [emailId], references: [id], onDelete: Cascade)
+  accountEmail    String?
   fullName        String
   contactEmail    String?
   phone           String?
@@ -123,6 +126,7 @@ model Candidate {
   @@index([experienceYears])
   @@index([receivedAt(sort: Desc)])
   @@index([seniority])
+  @@index([accountEmail])
   @@map("candidates")
 }
 
