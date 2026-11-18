@@ -67,24 +67,45 @@ export async function generateStructuredJSON<T>(
   const openAiClient = getOpenAiClient();
   const geminiClient = getGeminiClient();
 
-  // GROQ (openai/gpt-oss-120b / openai/gpt-oss-20b with JSON mode)
+  // GROQ (openai/gpt-oss-120b / openai/gpt-oss-20b with JSON mode and automatic rate-limit failover)
   if (provider === "groq" && groqClient) {
     const model = modelOverride || getEnv("GROQ_MODEL") || "openai/gpt-oss-120b";
-    const response = await groqClient.chat.completions.create({
-      model,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `${systemPrompt}\nOutput strict JSON only. Do not include markdown codeblocks or preamble.`,
-        },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.1,
-    });
+    try {
+      const response = await groqClient.chat.completions.create({
+        model,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `${systemPrompt}\nOutput strict JSON only. Do not include markdown codeblocks or preamble.`,
+          },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.1,
+      });
 
-    const content = cleanJsonString(response.choices[0]?.message?.content || "{}");
-    return JSON.parse(content) as T;
+      const content = cleanJsonString(response.choices[0]?.message?.content || "{}");
+      return JSON.parse(content) as T;
+    } catch (groqErr: any) {
+      if ((groqErr?.status === 429 || groqErr?.message?.includes("rate_limit")) && model !== "openai/gpt-oss-20b") {
+        console.warn(`[AI Provider] ${model} hit token/rate limit, automatically failing over to openai/gpt-oss-20b...`);
+        const fallbackResponse = await groqClient.chat.completions.create({
+          model: "openai/gpt-oss-20b",
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: `${systemPrompt}\nOutput strict JSON only. Do not include markdown codeblocks or preamble.`,
+            },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.1,
+        });
+        const fallbackContent = cleanJsonString(fallbackResponse.choices[0]?.message?.content || "{}");
+        return JSON.parse(fallbackContent) as T;
+      }
+      throw groqErr;
+    }
   }
 
   // OPENAI

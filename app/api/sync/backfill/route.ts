@@ -16,12 +16,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: "Sincronización pausada" });
     }
 
-    if (action === "start" || action === "resume" || action === "batch" || action === "reset") {
+    const validActions = ["start", "resume", "batch", "reset", "ingest", "process", "process_single"];
+    if (validActions.includes(action)) {
       const result = await processBackfillBatch({
         accountId: session?.accountId,
         queryFilter: body.queryFilter,
         reset: action === "reset",
-        batchSize: body.batchSize || 8,
+        action: action === "start" || action === "resume" ? "batch" : action,
+        batchSize: body.batchSize || 15,
+        targetEmailId: body.targetEmailId,
       });
 
       return NextResponse.json({
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ error: "Acción inválida. Usa start, pause, resume, batch o reset" }, { status: 400 });
+    return NextResponse.json({ error: "Acción inválida. Usa start, pause, resume, batch, ingest, process o reset" }, { status: 400 });
   } catch (error: any) {
     return NextResponse.json(
       { error: "Error en el control de sincronización", message: error.message },

@@ -60,6 +60,7 @@ interface LeftPanelFeedProps {
   isSyncingBatch?: boolean;
   onSelectCandidate?: (candidateId: string) => void;
   onToggleBackfill?: (action: "start" | "pause" | "reset") => void;
+  onProcessPending?: (targetEmailId?: string) => Promise<void>;
   onDismissEmail?: (emailId: string) => Promise<void>;
   onRestoreEmail?: (emailId: string) => Promise<void>;
   onRestoreMultiple?: (emailIds: string[]) => Promise<void>;
@@ -75,6 +76,7 @@ export function LeftPanelFeed({
   isSyncingBatch = false,
   onSelectCandidate,
   onToggleBackfill,
+  onProcessPending,
   onDismissEmail,
   onRestoreEmail,
   onRestoreMultiple,
@@ -87,6 +89,11 @@ export function LeftPanelFeed({
   const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
   const [cleaning, setCleaning] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [processingEmailId, setProcessingEmailId] = useState<string | null>(null);
+
+  const pendingEmailsCount = emails.filter(
+    (e) => !e.isDismissed && (e.status === "PENDING" || e.status === "PROCESSING")
+  ).length;
 
   const filteredEmails = emails.filter((mail) => {
     // Papelera vs Active
@@ -94,7 +101,11 @@ export function LeftPanelFeed({
       if (!mail.isDismissed) return false;
     } else {
       if (mail.isDismissed) return false;
-      if (filterTab !== "ALL" && mail.status !== filterTab) return false;
+      if (filterTab === "PROCESSING") {
+        if (mail.status !== "PROCESSING" && mail.status !== "PENDING") return false;
+      } else if (filterTab !== "ALL" && mail.status !== filterTab) {
+        return false;
+      }
     }
 
     if (!searchTerm.trim()) return true;
@@ -282,6 +293,34 @@ export function LeftPanelFeed({
             style={{ width: `${Math.max(8, progressPercent)}%` }}
           />
         </div>
+
+        {/* Pending Analysis Quick Action */}
+        {pendingEmailsCount > 0 && onProcessPending && (
+          <div className="mt-2.5 pt-2 border-t border-indigo-100 dark:border-indigo-900/40 flex items-center justify-between">
+            <span className="text-[11px] text-amber-700 dark:text-amber-400 font-medium flex items-center space-x-1">
+              <Sparkles className="w-3 h-3 text-amber-500 animate-pulse" />
+              <span>{pendingEmailsCount} CV(s) listos para IA</span>
+            </span>
+            <button
+              onClick={() => onProcessPending()}
+              disabled={isSyncingBatch}
+              className="text-[10px] px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition shadow-xs flex items-center space-x-1 disabled:opacity-50"
+              title="Procesar correos pendientes con IA y OCR"
+            >
+              {isSyncingBatch ? (
+                <>
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                  <span>Analizando...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-2.5 h-2.5" />
+                  <span>Analizar con IA</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Filter Tabs & Search */}
@@ -536,11 +575,43 @@ export function LeftPanelFeed({
                       </span>
                     )}
 
+                    {email.status === "PENDING" && (
+                      <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 font-medium">
+                        <Clock className="w-2.5 h-2.5" />
+                        <span>Pendiente</span>
+                      </span>
+                    )}
+
                     {email.status === "PROCESSING" && (
                       <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 font-medium animate-pulse">
                         <Clock className="w-2.5 h-2.5 animate-spin" />
                         <span>Analizando...</span>
                       </span>
+                    )}
+
+                    {onProcessPending && (email.status === "PENDING" || email.status === "ERROR") && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setProcessingEmailId(email.id);
+                          onProcessPending(email.id).finally(() => setProcessingEmailId(null));
+                        }}
+                        disabled={processingEmailId === email.id || isSyncingBatch}
+                        className="text-[10px] px-2 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/80 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium transition border border-indigo-200 dark:border-indigo-800/80 flex items-center space-x-1"
+                        title="Analizar este currículum con IA y OCR"
+                      >
+                        {processingEmailId === email.id ? (
+                          <>
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                            <span>Analizando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-2.5 h-2.5 text-indigo-500" />
+                            <span>Analizar</span>
+                          </>
+                        )}
+                      </button>
                     )}
 
                     {email.status === "DISCARDED" && (

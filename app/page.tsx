@@ -309,6 +309,41 @@ export default function ATSDashboard() {
   }, [isSyncingBatch, fetchEmailFeed]);
 
   /**
+   * Process pending candidate emails using AI & OCR in controlled batches
+   */
+  const handleProcessPending = async (targetEmailId?: string) => {
+    setIsSyncingBatch(true);
+    try {
+      const res = await fetch("/api/sync/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: targetEmailId ? "process_single" : "process",
+          targetEmailId,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.syncState) {
+          setSyncState(data.syncState);
+        }
+        await fetchEmailFeed();
+        if (data.resumesFound > 0) {
+          setBannerMessage({
+            type: "success",
+            text: `Se procesaron exitosamente ${data.resumesFound} currículum(s) con IA y OCR.`,
+          });
+          setTimeout(() => setBannerMessage(null), 4000);
+        }
+      }
+    } catch (err: any) {
+      console.error("Error processing pending candidates:", err);
+    } finally {
+      setIsSyncingBatch(false);
+    }
+  };
+
+  /**
    * Toggle backfill worker (start, pause, reset)
    */
   const handleToggleBackfill = async (action: "start" | "pause" | "reset") => {
@@ -560,6 +595,7 @@ export default function ATSDashboard() {
               isSyncingBatch={isSyncingBatch}
               onSelectCandidate={handleSelectCandidateFromFeed}
               onToggleBackfill={handleToggleBackfill}
+              onProcessPending={handleProcessPending}
               onDismissEmail={handleDismissEmail}
               onRestoreEmail={handleRestoreEmail}
               onRestoreMultiple={handleRestoreMultipleEmails}
@@ -603,6 +639,7 @@ export default function ATSDashboard() {
               isSyncingBatch={isSyncingBatch}
               onSelectCandidate={handleSelectCandidateFromFeed}
               onToggleBackfill={handleToggleBackfill}
+              onProcessPending={handleProcessPending}
               onDismissEmail={handleDismissEmail}
               onRestoreEmail={handleRestoreEmail}
               onRestoreMultiple={handleRestoreMultipleEmails}

@@ -32,3 +32,6 @@ yarn-error.log*
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Tesseract OCR Cache
+*.traineddata

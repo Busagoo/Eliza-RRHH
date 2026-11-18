@@ -1,8 +1,7 @@
-import { gmail_v1 } from "googleapis";
 import { prisma } from "../db";
 import { getAuthenticatedGmailClient } from "../gmail/client";
-import { listGmailMessages } from "../gmail/service";
-import { processSingleEmail } from "./emailProcessor";
+import { fastIngestEmailBatch } from "./fastIngestWorker";
+import { processPendingCandidateBatch } from "./candidateBatchProcessor";
 import { SyncStatus, EmailStatus } from "@prisma/client";
 import { getEnv } from "../env";
 
@@ -11,6 +10,8 @@ export interface BackfillOptions {
   queryFilter?: string;
   reset?: boolean;
   batchSize?: number;
+  action?: "batch" | "ingest" | "process" | "process_single";
+  targetEmailId?: string;
 }
 
 export interface BackfillBatchResult {
@@ -19,6 +20,7 @@ export interface BackfillBatchResult {
   resumesFound: number;
   discarded: number;
   errors: number;
+  pendingRemaining?: number;
   nextPageToken: string | null;
   hasMore: boolean;
   syncState?: any;
@@ -26,9 +28,10 @@ export interface BackfillBatchResult {
 }
 
 /**
- * Executes a single bounded batch of Gmail message backfill.
- * Ideal for Serverless (Vercel) execution: takes ~3-5 seconds, avoids timeouts,
- * and maintains atomic progress in PostgreSQL.
+ * Executes Two-Phase Email Ingest & Candidate Processing:
+ * Phase 1: Rapid Gmail email & attachment ingestion without AI (takes ~1-2s).
+ * Phase 2: Controlled Candidate AI analysis with OCR and multi-domain parsing (takes ~3-4s).
+ * Safely runs within Vercel's serverless limits without dropping connections or hitting rate limits.
  */
 export async function processBackfillBatch(options: BackfillOptions = {}): Promise<BackfillBatchResult> {
   const account = options.accountId
@@ -54,7 +57,7 @@ export async function processBackfillBatch(options: BackfillOptions = {}): Promi
   const envQuery = getEnv("BACKFILL_QUERY");
   const defaultQuery = envQuery !== undefined && envQuery !== "" ? envQuery : "in:inbox";
   const queryFilter = options.queryFilter || defaultQuery;
-  const batchSize = Math.min(20, Math.max(1, options.batchSize || Number(getEnv("BACKFILL_BATCH_SIZE")) || 8));
+  const action = options.action || "batch";
 
   // Find or create active SyncState
   let syncState = await prisma.syncState.findFirst({
@@ -101,113 +104,83 @@ export async function processBackfillBatch(options: BackfillOptions = {}): Promi
   const gmail = await getAuthenticatedGmailClient();
   const currentToken = options.reset ? undefined : (syncState.nextPageToken || undefined);
 
-  console.log(`[BackfillBatch] Processing batch (token: ${currentToken ? currentToken.slice(0, 10) + "..." : "START"}, size: ${batchSize})`);
-
-  let listResponse: any;
-  try {
-    listResponse = await listGmailMessages(gmail, {
-      q: queryFilter,
-      pageToken: currentToken,
-      maxResults: batchSize,
-    });
-  } catch (apiErr: any) {
-    console.error("[BackfillBatch] Gmail listMessages failed:", apiErr.message);
-    const updated = await prisma.syncState.update({
-      where: { id: syncState.id },
-      data: {
-        status: SyncStatus.ERROR,
-        lastError: apiErr.message,
-      },
-    });
-    return {
-      status: SyncStatus.ERROR,
-      processedCount: 0,
-      resumesFound: 0,
-      discarded: 0,
-      errors: 1,
-      nextPageToken: currentToken || null,
-      hasMore: false,
-      syncState: updated,
-      message: apiErr.message,
-    };
-  }
-
-  const messages = listResponse.messages || [];
-  const nextToken = listResponse.nextPageToken || null;
-
-  if (messages.length === 0) {
-    console.log("[BackfillBatch] No more messages found. Marking COMPLETED.");
-    const completedState = await prisma.syncState.update({
-      where: { id: syncState.id },
-      data: {
-        status: SyncStatus.COMPLETED,
-        nextPageToken: null,
-        completedAt: new Date(),
-      },
-    });
-
-    return {
-      status: SyncStatus.COMPLETED,
-      processedCount: 0,
-      resumesFound: 0,
-      discarded: 0,
-      errors: 0,
-      nextPageToken: null,
-      hasMore: false,
-      syncState: completedState,
-    };
-  }
-
-  let resumesInBatch = 0;
+  let ingestedInBatch = 0;
   let discardedInBatch = 0;
+  let candidatesCreatedInBatch = 0;
   let errorsInBatch = 0;
-  let processedInBatch = 0;
+  let nextToken = currentToken || null;
+  let hasMorePages = Boolean(currentToken);
 
-  // Process emails sequentially to guarantee connection safety and stability
-  for (const msgRef of messages) {
-    if (!msgRef.id) continue;
+  // ---------------------------------------------------------------------------
+  // PHASE 1: Fast Email Ingestion (No AI, zero timeout risk)
+  // ---------------------------------------------------------------------------
+  if (action === "batch" || action === "ingest") {
     try {
-      const res = await processSingleEmail(gmail, msgRef.id, undefined, account.email);
-      processedInBatch++;
-      if (res.status === EmailStatus.PROCESSED) {
-        resumesInBatch++;
-      } else if (res.status === EmailStatus.DISCARDED) {
-        discardedInBatch++;
-      } else {
-        errorsInBatch++;
-      }
-    } catch (procErr: any) {
-      processedInBatch++;
+      const ingestResult = await fastIngestEmailBatch(gmail, {
+        accountId,
+        accountEmail: account.email,
+        queryFilter,
+        pageToken: currentToken,
+        batchSize: options.batchSize || 15,
+      });
+
+      ingestedInBatch = ingestResult.ingestedCount;
+      discardedInBatch = ingestResult.discardedCount;
+      nextToken = ingestResult.nextPageToken;
+      hasMorePages = ingestResult.hasMore;
+    } catch (ingestErr: any) {
+      console.error("[Backfill] Fast ingest failed:", ingestErr.message);
       errorsInBatch++;
-      console.error(`[BackfillBatch] Error processing email ${msgRef.id}:`, procErr.message);
     }
   }
 
-  const finalStatus = nextToken ? SyncStatus.RUNNING : SyncStatus.COMPLETED;
+  // ---------------------------------------------------------------------------
+  // PHASE 2: Candidate AI Processing (OCR for PNG/JPG + Multi-domain LLM)
+  // ---------------------------------------------------------------------------
+  let pendingRemaining = 0;
+  if (action === "batch" || action === "process" || action === "process_single") {
+    try {
+      const procResult = await processPendingCandidateBatch(gmail, {
+        accountEmail: account.email,
+        batchSize: 3, // Safe bounded batch for LLM & Vercel
+        targetEmailId: options.targetEmailId,
+      });
 
-  // Single atomic database update for the entire batch
+      candidatesCreatedInBatch = procResult.candidatesFound;
+      errorsInBatch += procResult.errors;
+      pendingRemaining = procResult.pendingRemaining;
+    } catch (procErr: any) {
+      console.error("[Backfill] Candidate processor failed:", procErr.message);
+      errorsInBatch++;
+    }
+  }
+
+  const finalStatus = hasMorePages || pendingRemaining > 0 ? SyncStatus.RUNNING : SyncStatus.COMPLETED;
+
+  // Single atomic database update for progress
   const updatedState = await prisma.syncState.update({
     where: { id: syncState.id },
     data: {
-      totalScanned: { increment: processedInBatch },
-      totalResumesFound: { increment: resumesInBatch },
+      totalScanned: { increment: ingestedInBatch },
+      totalResumesFound: { increment: candidatesCreatedInBatch },
       totalDiscarded: { increment: discardedInBatch },
       totalErrors: { increment: errorsInBatch },
       nextPageToken: nextToken,
       status: finalStatus,
-      completedAt: nextToken ? null : new Date(),
+      completedAt: finalStatus === SyncStatus.COMPLETED ? new Date() : null,
       updatedAt: new Date(),
     },
   });
 
   return {
     status: finalStatus,
-    processedCount: processedInBatch,
-    resumesFound: resumesInBatch,
+    processedCount: ingestedInBatch + candidatesCreatedInBatch,
+    resumesFound: candidatesCreatedInBatch,
     discarded: discardedInBatch,
     errors: errorsInBatch,
+    pendingRemaining,
     nextPageToken: nextToken,
-    hasMore: Boolean(nextToken),
+    hasMore: hasMorePages || pendingRemaining > 0,
     syncState: updatedState,
   };
 }

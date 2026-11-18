@@ -1,6 +1,7 @@
 import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
 import zlib from "zlib";
+import Tesseract from "tesseract.js";
 
 function decodePdfOctal(str: string): string {
   return str
@@ -153,7 +154,30 @@ export async function extractTextFromDocument(
       return cleanExtractedText(result.value);
     }
 
-    // 3. Plain text / markdown
+    // 3. Image OCR (.png, .jpg, .jpeg, .webp) - Critical for scanned or designed CVs
+    const isImage =
+      lowerName.endsWith(".png") ||
+      lowerName.endsWith(".jpg") ||
+      lowerName.endsWith(".jpeg") ||
+      lowerName.endsWith(".webp") ||
+      mimeType?.startsWith("image/");
+
+    if (isImage) {
+      try {
+        console.log(`[DocumentParser] Running OCR on image resume: ${filename}...`);
+        const ocrResult = await Tesseract.recognize(buffer, "spa+eng");
+        const ocrText = ocrResult?.data?.text || "";
+        if (ocrText.length > 20) {
+          console.log(`[DocumentParser] Successfully extracted ${ocrText.length} characters via OCR from ${filename}`);
+          return cleanExtractedText(ocrText);
+        }
+      } catch (ocrErr: any) {
+        console.warn(`[DocumentParser] OCR recognition failed on ${filename}:`, ocrErr.message);
+      }
+      return "";
+    }
+
+    // 4. Plain text / markdown
     if (
       lowerName.endsWith(".txt") ||
       lowerName.endsWith(".md") ||
@@ -169,6 +193,19 @@ export async function extractTextFromDocument(
       return "";
     }
 
+    // Check if it's a PNG / JPG by magic bytes
+    if (
+      buffer.slice(0, 4).toString("ascii").includes("PNG") ||
+      (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
+    ) {
+      try {
+        const ocrResult = await Tesseract.recognize(buffer, "spa+eng");
+        const ocrText = ocrResult?.data?.text || "";
+        if (ocrText.length > 20) return cleanExtractedText(ocrText);
+      } catch {}
+      return "";
+    }
+
     return cleanExtractedText(buffer.toString("utf-8"));
   } catch (err: any) {
     console.error(`[DocumentParser] Failed to extract text from ${filename}:`, err);
@@ -177,13 +214,22 @@ export async function extractTextFromDocument(
 }
 
 /**
- * Normalizes and cleans up raw extracted text, rejecting raw binary PDF headers
+ * Normalizes and cleans up raw extracted text, rejecting raw binary PDF headers and image magic bytes
  */
 function cleanExtractedText(raw: string): string {
   if (!raw) return "";
 
-  // Reject raw binary PDF data
-  if (raw.startsWith("%PDF-") || /^\s*%PDF/i.test(raw)) {
+  // Reject raw binary PDF or Image data
+  if (
+    raw.startsWith("%PDF-") ||
+    /^\s*%PDF/i.test(raw) ||
+    raw.startsWith("\x89PNG") ||
+    raw.startsWith("PNG") ||
+    raw.startsWith("PNG") ||
+    raw.startsWith("\xff\xd8\xff") ||
+    raw.includes("JFIF") ||
+    raw.includes("Exif")
+  ) {
     return "";
   }
 
