@@ -45,6 +45,16 @@ export default function ATSDashboard() {
   // Modals
   const [resumeModalCandidate, setResumeModalCandidate] = useState<CandidateSearchResponseItem | null>(null);
   const [detailModalCandidate, setDetailModalCandidate] = useState<CandidateSearchResponseItem | null>(null);
+  const [detailModalTab, setDetailModalTab] = useState<"overview" | "notes">("overview");
+
+  const handleUpdateCandidate = (updated: CandidateSearchResponseItem) => {
+    setRankedCandidates((prev) =>
+      prev.map((c) => (c.id === updated.id ? updated : c))
+    );
+    if (detailModalCandidate?.id === updated.id) {
+      setDetailModalCandidate(updated);
+    }
+  };
 
   // Notification banners
   const [bannerMessage, setBannerMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -573,7 +583,11 @@ export default function ATSDashboard() {
               activeQuery={activeQuery}
               loading={loadingSearch}
               onOpenResume={(candidate) => setResumeModalCandidate(candidate)}
-              onOpenDetails={(candidate) => setDetailModalCandidate(candidate)}
+              onOpenDetails={(candidate, initialTab) => {
+                setDetailModalCandidate(candidate);
+                setDetailModalTab(initialTab || "overview");
+              }}
+              onUpdateCandidate={handleUpdateCandidate}
             />
           </div>
 
@@ -611,7 +625,11 @@ export default function ATSDashboard() {
               activeQuery={activeQuery}
               loading={loadingSearch}
               onOpenResume={(candidate) => setResumeModalCandidate(candidate)}
-              onOpenDetails={(candidate) => setDetailModalCandidate(candidate)}
+              onOpenDetails={(candidate, initialTab) => {
+                setDetailModalCandidate(candidate);
+                setDetailModalTab(initialTab || "overview");
+              }}
+              onUpdateCandidate={handleUpdateCandidate}
             />
           )}
 
@@ -635,8 +653,10 @@ export default function ATSDashboard() {
       <CandidateDetailModal
         candidate={detailModalCandidate}
         isOpen={Boolean(detailModalCandidate)}
+        initialTab={detailModalTab}
         onClose={() => setDetailModalCandidate(null)}
         onOpenResume={(c) => setResumeModalCandidate(c)}
+        onUpdateCandidate={handleUpdateCandidate}
       />
     </div>
   );

@@ -4,6 +4,8 @@ import { setupGmailWatch } from "@/lib/gmail/push";
 import { runHistoricalBackfill } from "@/lib/workers/backfillWorker";
 import { prisma } from "@/lib/db";
 import { google } from "googleapis";
+import { setSessionCookie } from "@/lib/auth/session";
+import { getEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,23 @@ export async function GET(req: NextRequest) {
     const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
     const userEmail = userInfo.data.email || process.env.GOOGLE_USER_EMAIL || "linked_user@gmail.com";
+
+    // Access control: Check allowed emails if configured
+    const allowedEmailsStr = getEnv("ALLOWED_EMAILS") || process.env.ALLOWED_EMAILS || "";
+    if (allowedEmailsStr.trim()) {
+      const allowed = allowedEmailsStr
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowed.length > 0 && !allowed.includes(userEmail.toLowerCase())) {
+        console.warn(`[GmailCallback] Unauthorized login attempt: ${userEmail}`);
+        return NextResponse.redirect(
+          `${baseUrl}/?auth_error=${encodeURIComponent(
+            `El correo ${userEmail} no está autorizado para acceder al sistema.`
+          )}`
+        );
+      }
+    }
 
     // Upsert Account record
     const account = await prisma.account.upsert({
@@ -63,7 +82,13 @@ export async function GET(req: NextRequest) {
       console.error("[GmailCallback] Failed to launch backfill worker:", err)
     );
 
-    return NextResponse.redirect(`${baseUrl}/?auth_success=true&email=${encodeURIComponent(userEmail)}`);
+    // Attach device-specific secure session cookie to response
+    const redirectRes = NextResponse.redirect(
+      `${baseUrl}/?auth_success=true&email=${encodeURIComponent(userEmail)}`
+    );
+    setSessionCookie(redirectRes, userEmail, account.id);
+
+    return redirectRes;
   } catch (err: any) {
     console.error("[GmailCallback] OAuth exchange error:", err);
     return NextResponse.redirect(`${baseUrl}/?auth_error=${encodeURIComponent(err.message)}`);

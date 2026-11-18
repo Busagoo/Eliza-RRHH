@@ -56,7 +56,7 @@ export async function generateStructuredJSON<T>(
 
   // GROQ (Llama 3.3 70B / Llama 3.1 8B with JSON mode)
   if (provider === "groq" && groqClient) {
-    const model = modelOverride || getEnv("GROQ_MODEL") || "openai/gpt-oss-120b";
+    const model = modelOverride || getEnv("GROQ_MODEL") || "llama-3.3-70b-versatile";
     const response = await groqClient.chat.completions.create({
       model,
       response_format: { type: "json_object" },
@@ -123,7 +123,7 @@ export async function generateCompletion(
   const geminiClient = getGeminiClient();
 
   if (provider === "groq" && groqClient) {
-    const model = modelOverride || getEnv("GROQ_MODEL_FAST") || "openai/gpt-oss-20b";
+    const model = modelOverride || getEnv("GROQ_MODEL_FAST") || "llama-3.1-8b-instant";
     const response = await groqClient.chat.completions.create({
       model,
       messages: [

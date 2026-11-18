@@ -1,18 +1,43 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { EmailStatus } from "@prisma/client";
+import { getSessionFromRequest } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const session = getSessionFromRequest(req);
+
+    // If this specific device does not have an active session cookie, treat as unauthenticated
+    if (!session?.email) {
+      return NextResponse.json({
+        connected: false,
+        account: null,
+        syncState: {
+          status: "IDLE",
+          totalScanned: 0,
+          totalResumesFound: 0,
+          totalDiscarded: 0,
+          totalErrors: 0,
+        },
+        metrics: {
+          totalCandidates: 0,
+          totalEmails: 0,
+          totalProcessed: 0,
+          totalDiscarded: 0,
+          totalProcessing: 0,
+        },
+      });
+    }
+
     const [syncState, account, totalCandidates, emailCounts] = await Promise.all([
       prisma.syncState.findFirst({
         orderBy: { createdAt: "desc" },
       }),
-      prisma.account.findFirst({
+      prisma.account.findUnique({
+        where: { email: session.email },
         select: { id: true, email: true, updatedAt: true },
-        orderBy: { updatedAt: "desc" },
       }),
       prisma.candidate.count(),
       prisma.email.groupBy({
@@ -35,7 +60,7 @@ export async function GET() {
 
     return NextResponse.json({
       connected: Boolean(account),
-      account,
+      account: account || null,
       syncState: syncState || {
         status: "IDLE",
         totalScanned: 0,

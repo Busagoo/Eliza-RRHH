@@ -25,15 +25,23 @@ export interface CandidateForReranking {
 const RERANK_SYSTEM_PROMPT = `You are a Senior Technical Recruiter and ATS Match Evaluation Engine.
 Your task is to evaluate a batch of candidates against a specific job requirement provided by HR.
 
+CRITICAL ATS CALIBRATION RULES:
+1. DOMAIN MISMATCH PENALTY:
+   If a candidate's work history and skills are in a completely different domain (e.g., candidate has experience in logistics, warehouse, machine operation like "guillotina", manual labor, or general administration, while the search asks for Software, Programming, SAP, or Financial Analysis), the matchScore MUST BE BETWEEN 0 AND 15, regardless of their total years of career. Experience in an unrelated field does NOT translate to specialized roles.
+2. ZERO HARD SKILLS PENALTY:
+   If the candidate does not have ANY of the core technical tools, languages, or skills demanded by the role, their matchScore MUST NEVER EXCEED 15%.
+3. REALISTIC SCORE DISTRIBUTION:
+   - 85-100: Exceptional match. Exceeds core requirements, solid demonstrable experience in the exact tech/domain.
+   - 70-84: Strong match. Meets core tech/domain requirements with relevant background.
+   - 40-69: Moderate match. Same industry/field but missing secondary tools or lacking seniority.
+   - 16-39: Weak match. Barely tangential, junior with only partial transferrable skills.
+   - 0-15: Completely unrelated candidate or 0 matching skills.
+
 For each candidate, provide:
-1. matchScore: An integer between 0 and 100 representing how well the candidate matches the requirements.
-   - 90-100: Exceptional match, exceeds all must-have criteria.
-   - 75-89: Strong match, meets all core requirements with relevant experience.
-   - 60-74: Moderate match, meets some requirements but has minor gaps.
-   - Below 60: Weak match, missing critical skills or significant experience gaps.
-2. justification: 1 to 2 concise sentences in Spanish explaining specifically WHY this candidate fits the role and highlighting their most relevant experience or skills.
-3. keyStrengths: Array of up to 3 matched skills or attributes.
-4. missingRequirements: Array of up to 2 gaps or missing criteria.
+1. matchScore: An integer between 0 and 100 based strictly on the calibration rules above.
+2. justification: 1 to 2 concise sentences in Spanish explaining specifically WHY this candidate fits or does NOT fit the role.
+3. keyStrengths: Array of up to 3 matched skills or attributes (empty if none match).
+4. missingRequirements: Array of up to 2 critical gaps or missing criteria.
 
 Output JSON:
 {
@@ -119,15 +127,17 @@ export function heuristicRerank(
   const queryLower = query.toLowerCase();
   const queryTerms = queryLower
     .split(/[\s,.;:/+]+/)
-    .filter((w) => w.length > 2 && !["con", "para", "los", "las", "del", "que", "una", "por"].includes(w));
+    .filter((w) => w.length > 2 && !["con", "para", "los", "las", "del", "que", "una", "por", "sobre"].includes(w));
+
+  const techDomains = ["software", "desarrollo", "programad", "developer", "frontend", "backend", "fullstack", "react", "c#", ".net", "python", "java", "sql", "sap", "base de datos", "finanzas", "contab"];
+  const isSpecializedQuery = techDomains.some((d) => queryLower.includes(d));
 
   return candidates.map((candidate) => {
-    let score = 50; // base score
+    const candidateSkillsLower = candidate.skills.map((s) => s.toLowerCase());
+    const candidateText = `${candidate.summary || ""} ${candidateSkillsLower.join(" ")}`.toLowerCase();
+
     const matchedStrengths: string[] = [];
     const gaps: string[] = [];
-
-    // 1. Skill term matching
-    const candidateSkillsLower = candidate.skills.map((s) => s.toLowerCase());
     let matchedSkillCount = 0;
 
     for (const term of queryTerms) {
@@ -140,39 +150,56 @@ export function heuristicRerank(
       }
     }
 
-    score += Math.min(35, matchedSkillCount * 12);
+    let finalScore = 5;
 
-    // 2. Experience check
-    if (queryLower.includes("senior") || queryLower.includes("sr")) {
-      if (candidate.seniority === "Senior" || candidate.experienceYears >= 5) {
-        score += 10;
-        matchedStrengths.push(`Seniority ${candidate.seniority || "Senior"}`);
+    // Hard check: If 0 skills matched
+    if (matchedSkillCount === 0) {
+      gaps.push("Sin habilidades técnicas coincidentes con la búsqueda");
+      
+      // Domain mismatch check (e.g. logistics/guillotina applying for software/sap/finance)
+      const hasUnrelatedDomain = /logistica|deposito|guillotina|operario|limpieza|chofer|maquinaria/i.test(candidateText);
+      if (isSpecializedQuery || hasUnrelatedDomain) {
+        finalScore = 5;
       } else {
-        score -= 10;
-        gaps.push("Menos de 5 años de experiencia");
+        finalScore = Math.min(12, 5 + (candidate.experienceYears > 0 ? 3 : 0));
       }
+    } else {
+      // Base score for matching at least 1 core requirement
+      finalScore = 25 + Math.min(55, matchedSkillCount * 18);
+
+      // Seniority bonus/penalty
+      if (queryLower.includes("senior") || queryLower.includes("sr")) {
+        if (candidate.seniority === "Senior" || candidate.experienceYears >= 5) {
+          finalScore += 10;
+          matchedStrengths.push(`Seniority ${candidate.seniority || "Senior"}`);
+        } else {
+          finalScore -= 8;
+          gaps.push("Menos de 5 años de experiencia");
+        }
+      }
+
+      // Language check
+      if (queryLower.includes("ingl") || queryLower.includes("english")) {
+        const langStr = JSON.stringify(candidate.languages || "").toLowerCase();
+        if (langStr.includes("ingl") || langStr.includes("english")) {
+          finalScore += 10;
+          matchedStrengths.push("Inglés comprobable");
+        } else {
+          finalScore -= 6;
+          gaps.push("Inglés no especificado en CV");
+        }
+      }
+
+      finalScore = Math.max(15, Math.min(99, finalScore));
     }
 
-    // 3. Language check
-    if (queryLower.includes("ingl") || queryLower.includes("english")) {
-      const langStr = JSON.stringify(candidate.languages || "").toLowerCase();
-      if (langStr.includes("ingl") || langStr.includes("english")) {
-        score += 10;
-        matchedStrengths.push("Inglés comprobable");
-      } else {
-        score -= 8;
-        gaps.push("Inglés no especificado en CV");
-      }
-    }
-
-    const finalScore = Math.max(15, Math.min(99, score));
     const yearStr = candidate.receivedAt
       ? new Date(candidate.receivedAt).getFullYear()
       : "reciente";
 
-    const justification = matchedStrengths.length > 0
+    const justification = matchedSkillCount > 0
       ? `Coincide con ${matchedStrengths.slice(0, 2).join(" y ")}, aportando ${candidate.experienceYears} años de experiencia (CV registrado en ${yearStr}).`
-      : `Perfil técnico en desarrollo con ${candidate.experienceYears} años de trayectoria en el stack evaluado.`;
+      : `No posee experiencia ni habilidades demostrables en las tecnologías o requerimientos específicos del puesto.`;
 
     return {
       candidateId: candidate.id,

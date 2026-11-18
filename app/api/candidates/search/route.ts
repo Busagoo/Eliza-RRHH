@@ -26,6 +26,9 @@ export interface CandidateSearchResponseItem {
   keyStrengths: string[];
   missingRequirements: string[];
   similarityScore?: number;
+  folders?: { id: string; name: string; color: string }[];
+  tags?: { id: string; tagName: string; tagColor: string }[];
+  notesCount?: number;
 }
 
 export async function POST(req: NextRequest) {
@@ -36,6 +39,7 @@ export async function POST(req: NextRequest) {
     const minExperience = filters.minExperience ? Number(filters.minExperience) : null;
     const seniority = filters.seniority && filters.seniority !== "ALL" ? filters.seniority : null;
     const includeHistorical = filters.includeHistorical !== false; // defaults to true (2024+)
+    const folderId = filters.folderId && filters.folderId !== "ALL" ? filters.folderId : null;
 
     if (!query) {
       return NextResponse.json({ error: "Search query is required" }, { status: 400 });
@@ -47,13 +51,29 @@ export async function POST(req: NextRequest) {
 
     let candidatesForRerank: any[] = [];
 
+    // If folderId is provided, get eligible candidate IDs first
+    let allowedCandidateIds: string[] | null = null;
+    if (folderId) {
+      const folderAssignments = await prisma.candidateFolder.findMany({
+        where: { folderId },
+        select: { candidateId: true },
+      });
+      allowedCandidateIds = folderAssignments.map((a) => a.candidateId);
+      if (allowedCandidateIds.length === 0) {
+        return NextResponse.json({
+          candidates: [],
+          totalEvaluated: 0,
+          searchQuery: query,
+        });
+      }
+    }
+
     // 2. Attempt pgvector cosine similarity search
     try {
       const minExpFilter = minExperience ?? 0;
       const seniorityFilter = seniority ?? "%";
 
-      const vectorResults: any[] = await prisma.$queryRawUnsafe(
-        `SELECT
+      let rawQuery = `SELECT
           id,
           "fullName",
           "contactEmail",
@@ -71,9 +91,17 @@ export async function POST(req: NextRequest) {
         FROM candidates
         WHERE "experienceYears" >= $2
           AND ($3 = '%' OR seniority = $3)
-          AND ($4::boolean = true OR "receivedAt" >= NOW() - INTERVAL '6 months')
-        ORDER BY embedding <=> $1::vector ASC
-        LIMIT 30;`,
+          AND ($4::boolean = true OR "receivedAt" >= NOW() - INTERVAL '6 months')`;
+
+      if (allowedCandidateIds && allowedCandidateIds.length > 0) {
+        const idList = allowedCandidateIds.map((id) => `'${id}'`).join(",");
+        rawQuery += ` AND id IN (${idList})`;
+      }
+
+      rawQuery += ` ORDER BY embedding <=> $1::vector ASC LIMIT 30;`;
+
+      const vectorResults: any[] = await prisma.$queryRawUnsafe(
+        rawQuery,
         vectorString,
         minExpFilter,
         seniorityFilter,
@@ -93,6 +121,10 @@ export async function POST(req: NextRequest) {
     // 3. Fallback relational query if pgvector is not initialized or yielded zero results
     if (candidatesForRerank.length === 0) {
       const where: Prisma.CandidateWhereInput = {};
+
+      if (allowedCandidateIds && allowedCandidateIds.length > 0) {
+        where.id = { in: allowedCandidateIds };
+      }
 
       if (minExperience) {
         where.experienceYears = { gte: minExperience };
@@ -126,12 +158,48 @@ export async function POST(req: NextRequest) {
       });
 
       // If still empty due to strict filters, fetch top recent candidates to rank against
-      if (candidatesForRerank.length === 0) {
+      if (candidatesForRerank.length === 0 && !folderId) {
         candidatesForRerank = await prisma.candidate.findMany({
           take: 30,
           orderBy: { receivedAt: "desc" },
         });
       }
+    }
+
+    // Fetch related folders, tags, and notes count for all matched candidates
+    const matchedIds = candidatesForRerank.map((c) => c.id);
+    const [candidateFolders, candidateTags, candidateNotes] = await Promise.all([
+      prisma.candidateFolder.findMany({
+        where: { candidateId: { in: matchedIds } },
+        include: { folder: true },
+      }),
+      prisma.candidateTagAssignment.findMany({
+        where: { candidateId: { in: matchedIds } },
+      }),
+      prisma.candidateNote.groupBy({
+        by: ["candidateId"],
+        where: { candidateId: { in: matchedIds } },
+        _count: { id: true },
+      }),
+    ]);
+
+    const folderMap = new Map<string, { id: string; name: string; color: string }[]>();
+    for (const cf of candidateFolders) {
+      const list = folderMap.get(cf.candidateId) || [];
+      list.push({ id: cf.folder.id, name: cf.folder.name, color: cf.folder.color || "#6366f1" });
+      folderMap.set(cf.candidateId, list);
+    }
+
+    const tagMap = new Map<string, { id: string; tagName: string; tagColor: string }[]>();
+    for (const ct of candidateTags) {
+      const list = tagMap.get(ct.candidateId) || [];
+      list.push({ id: ct.id, tagName: ct.tagName, tagColor: ct.tagColor || "#10b981" });
+      tagMap.set(ct.candidateId, list);
+    }
+
+    const noteCountMap = new Map<string, number>();
+    for (const cn of candidateNotes) {
+      noteCountMap.set(cn.candidateId, cn._count.id);
     }
 
     // 4. Map candidates to CandidateForReranking interface
@@ -175,11 +243,14 @@ export async function POST(req: NextRequest) {
         education: parsed.education || [],
         resumeFileUrl: c.resumeFileUrl,
         receivedAt: c.receivedAt,
-        matchScore: evaluation?.matchScore ?? 60,
-        justification: evaluation?.justification ?? "Coincidencia evaluada según perfil y experiencia técnica.",
+        matchScore: evaluation?.matchScore ?? 10,
+        justification: evaluation?.justification ?? "Sin evaluación específica.",
         keyStrengths: evaluation?.keyStrengths ?? [],
         missingRequirements: evaluation?.missingRequirements ?? [],
         similarityScore: c.similarity ? Math.round(Number(c.similarity) * 100) : undefined,
+        folders: folderMap.get(c.id) || [],
+        tags: tagMap.get(c.id) || [],
+        notesCount: noteCountMap.get(c.id) || 0,
       };
     });
 

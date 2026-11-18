@@ -115,11 +115,68 @@ model Candidate {
   createdAt       DateTime                      @default(now())
   updatedAt       DateTime                      @updatedAt
 
+  folders         CandidateFolder[]
+  notes           CandidateNote[]
+  tags            CandidateTagAssignment[]
+
   @@index([fullName])
   @@index([experienceYears])
   @@index([receivedAt(sort: Desc)])
   @@index([seniority])
   @@map("candidates")
+}
+
+model JobFolder {
+  id           String            @id @default(uuid())
+  name         String
+  description  String?
+  color        String?           @default("#6366f1")
+  accountEmail String
+  candidates   CandidateFolder[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([accountEmail])
+  @@map("job_folders")
+}
+
+model CandidateFolder {
+  id          String    @id @default(uuid())
+  folderId    String
+  folder      JobFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  addedAt     DateTime  @default(now())
+
+  @@unique([folderId, candidateId])
+  @@map("candidate_folders")
+}
+
+model CandidateNote {
+  id          String    @id @default(uuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  authorEmail String
+  content     String    @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([candidateId])
+  @@map("candidate_notes")
+}
+
+model CandidateTagAssignment {
+  id           String    @id @default(uuid())
+  candidateId  String
+  candidate    Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  tagName      String
+  tagColor     String?   @default("#10b981")
+  accountEmail String
+  createdAt    DateTime  @default(now())
+
+  @@unique([candidateId, tagName, accountEmail])
+  @@index([candidateId])
+  @@map("candidate_tag_assignments")
 }
 
 model SearchQuery {
