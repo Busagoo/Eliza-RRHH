@@ -58,6 +58,8 @@ interface LeftPanelFeedProps {
   syncState: SyncStateData;
   loading?: boolean;
   isSyncingBatch?: boolean;
+  isAiPaused?: boolean;
+  onToggleAiPause?: () => void;
   onSelectCandidate?: (candidateId: string) => void;
   onToggleBackfill?: (action: "start" | "pause" | "reset") => void;
   onProcessPending?: (targetEmailId?: string) => Promise<void>;
@@ -74,6 +76,8 @@ export function LeftPanelFeed({
   syncState,
   loading = false,
   isSyncingBatch = false,
+  isAiPaused = true,
+  onToggleAiPause,
   onSelectCandidate,
   onToggleBackfill,
   onProcessPending,
@@ -294,31 +298,67 @@ export function LeftPanelFeed({
           />
         </div>
 
-        {/* Pending Analysis Quick Action */}
+        {/* Pending Analysis Quick Action & Pause Control */}
         {pendingEmailsCount > 0 && onProcessPending && (
-          <div className="mt-2.5 pt-2 border-t border-indigo-100 dark:border-indigo-900/40 flex items-center justify-between">
-            <span className="text-[11px] text-amber-700 dark:text-amber-400 font-medium flex items-center space-x-1">
+          <div className="mt-2.5 pt-2 border-t border-indigo-100 dark:border-indigo-900/40 flex items-center justify-between gap-1 flex-wrap">
+            <span className="text-[11px] font-medium flex items-center space-x-1">
               <Sparkles className="w-3 h-3 text-amber-500 animate-pulse" />
-              <span>{pendingEmailsCount} CV(s) listos para IA</span>
+              <span className={isAiPaused ? "text-amber-700 dark:text-amber-400" : "text-indigo-600 dark:text-indigo-400 font-semibold"}>
+                {pendingEmailsCount} {pendingEmailsCount === 1 ? "correo por analizar" : "correos por analizar"}
+                {isAiPaused && " (IA en pausa)"}
+              </span>
             </span>
-            <button
-              onClick={() => onProcessPending()}
-              disabled={isSyncingBatch}
-              className="text-[10px] px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition shadow-xs flex items-center space-x-1 disabled:opacity-50"
-              title="Procesar correos pendientes con IA y OCR"
-            >
-              {isSyncingBatch ? (
-                <>
-                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                  <span>Analizando...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-2.5 h-2.5" />
-                  <span>Analizar con IA</span>
-                </>
+
+            <div className="flex items-center space-x-1.5">
+              {/* Toggle Pause / Resume Auto-AI */}
+              {onToggleAiPause && (
+                <button
+                  onClick={onToggleAiPause}
+                  className={`text-[10px] px-2 py-0.5 rounded font-medium transition flex items-center space-x-1 ${
+                    isAiPaused
+                      ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 hover:bg-emerald-200"
+                      : "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 hover:bg-amber-200"
+                  }`}
+                  title={
+                    isAiPaused
+                      ? "Reanudar análisis automático continuo en segundo plano"
+                      : "Pausar análisis de IA para acumular correos más rápido sin gastar tokens"
+                  }
+                >
+                  {isAiPaused ? (
+                    <>
+                      <Play className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Auto-IA</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                      <span>Pausar IA</span>
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+
+              {/* Manual Batch Trigger */}
+              <button
+                onClick={() => onProcessPending()}
+                disabled={isSyncingBatch}
+                className="text-[10px] px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition shadow-xs flex items-center space-x-1 disabled:opacity-50"
+                title="Analizar un lote de 3 correos pendientes ahora"
+              >
+                {isSyncingBatch ? (
+                  <>
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                    <span>Analizando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-2.5 h-2.5" />
+                    <span>Analizar lote</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -373,7 +413,7 @@ export function LeftPanelFeed({
             }`}
           >
             <Clock className="w-3 h-3" />
-            <span>Analizando</span>
+            <span>Por analizar {pendingEmailsCount > 0 && `(${pendingEmailsCount})`}</span>
           </button>
           <button
             onClick={() => setFilterTab("DISCARDED")}

@@ -35,6 +35,31 @@ export default function ATSDashboard() {
   const [loadingFeed, setLoadingFeed] = useState<boolean>(true);
   const [isSyncingBatch, setIsSyncingBatch] = useState<boolean>(false);
 
+  // AI analysis pause control (defaults to paused to allow fast email accumulation without token burn)
+  const [isAiPaused, setIsAiPaused] = useState<boolean>(true);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("ats_ai_analysis_paused");
+    if (saved !== null) {
+      setIsAiPaused(saved === "true");
+    }
+  }, []);
+
+  const handleToggleAiPause = () => {
+    setIsAiPaused((prev) => {
+      const nextVal = !prev;
+      localStorage.setItem("ats_ai_analysis_paused", String(nextVal));
+      setBannerMessage({
+        type: "info",
+        text: nextVal
+          ? "Análisis con IA pausado. Los correos se acumularán rápidamente sin consumir tokens."
+          : "Análisis con IA activado. Analizando correos pendientes en segundo plano.",
+      });
+      setTimeout(() => setBannerMessage(null), 4000);
+      return nextVal;
+    });
+  };
+
   // Search & Candidates Ranking States
   const [rankedCandidates, setRankedCandidates] = useState<CandidateSearchResponseItem[]>([]);
   const [activeQuery, setActiveQuery] = useState<string>("");
@@ -55,7 +80,7 @@ export default function ATSDashboard() {
   };
 
   // Notification banners
-  const [bannerMessage, setBannerMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [bannerMessage, setBannerMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
 
   // Sync theme with document element
   useEffect(() => {
@@ -281,32 +306,36 @@ export default function ATSDashboard() {
   };
 
   /**
-   * Runs a single bounded batch of email sync
+   * Runs a single bounded batch of email sync (fast ingest or full batch)
    */
-  const runSyncBatch = useCallback(async () => {
-    if (isSyncingBatch) return null;
-    setIsSyncingBatch(true);
-    try {
-      const res = await fetch("/api/sync/backfill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "batch" }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.syncState) {
-          setSyncState(data.syncState);
+  const runSyncBatch = useCallback(
+    async (forcedAction?: "ingest" | "batch" | "process") => {
+      if (isSyncingBatch) return null;
+      setIsSyncingBatch(true);
+      try {
+        const actionToUse = forcedAction || (isAiPaused ? "ingest" : "batch");
+        const res = await fetch("/api/sync/backfill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: actionToUse }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.syncState) {
+            setSyncState(data.syncState);
+          }
+          await fetchEmailFeed();
+          return data;
         }
-        await fetchEmailFeed();
-        return data;
+      } catch (err) {
+        console.warn("Batch sync error:", err);
+      } finally {
+        setIsSyncingBatch(false);
       }
-    } catch (err) {
-      console.warn("Batch sync error:", err);
-    } finally {
-      setIsSyncingBatch(false);
-    }
-    return null;
-  }, [isSyncingBatch, fetchEmailFeed]);
+      return null;
+    },
+    [isSyncingBatch, isAiPaused, fetchEmailFeed]
+  );
 
   /**
    * Process pending candidate emails using AI & OCR in controlled batches
@@ -471,21 +500,42 @@ export default function ATSDashboard() {
     return () => clearInterval(interval);
   }, [fetchSyncStatus, fetchEmailFeed]);
 
-  // Reactive runner: while syncState.status is RUNNING, sequentially process batches
+  // Reactive runner: controls fast email ingestion and AI processing
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
 
-    if (syncState.status === "RUNNING" && !isSyncingBatch) {
-      timeoutId = setTimeout(async () => {
-        const res = await runSyncBatch();
-        if (res && (!res.hasMore || res.status === "COMPLETED")) {
-          fetchSyncStatus();
+    if (!isSyncingBatch) {
+      if (syncState.status === "RUNNING") {
+        // Fast ingestion mode: sync incoming emails quickly without AI if paused
+        timeoutId = setTimeout(async () => {
+          const res = await runSyncBatch(isAiPaused ? "ingest" : "batch");
+          if (res && (!res.hasMore || res.status === "COMPLETED")) {
+            fetchSyncStatus();
+          }
+        }, 1200);
+      } else if (!isAiPaused) {
+        // Ingestion completed or idle, but AI analysis is active: process pending emails
+        const hasPending = emails.some(
+          (e) => !e.isDismissed && (e.status === "PENDING" || e.status === "PROCESSING")
+        );
+        if (hasPending) {
+          timeoutId = setTimeout(async () => {
+            await handleProcessPending();
+          }, 1500);
         }
-      }, 1000);
+      }
     }
 
     return () => clearTimeout(timeoutId);
-  }, [syncState.status, isSyncingBatch, runSyncBatch, fetchSyncStatus]);
+  }, [
+    syncState.status,
+    isAiPaused,
+    isSyncingBatch,
+    emails,
+    runSyncBatch,
+    handleProcessPending,
+    fetchSyncStatus,
+  ]);
 
   // 1. Initial authentication loading state
   if (checkingAuth) {
@@ -530,6 +580,8 @@ export default function ATSDashboard() {
           className={`px-4 py-2 text-xs flex items-center justify-between font-medium transition-all ${
             bannerMessage.type === "success"
               ? "bg-emerald-100 dark:bg-emerald-950/90 text-emerald-800 dark:text-emerald-300 border-b border-emerald-300 dark:border-emerald-800"
+              : bannerMessage.type === "info"
+              ? "bg-indigo-100 dark:bg-indigo-950/90 text-indigo-800 dark:text-indigo-300 border-b border-indigo-300 dark:border-indigo-800"
               : "bg-rose-100 dark:bg-rose-950/90 text-rose-800 dark:text-rose-300 border-b border-rose-300 dark:border-rose-800"
           }`}
         >
@@ -593,6 +645,8 @@ export default function ATSDashboard() {
               syncState={syncState}
               loading={loadingFeed}
               isSyncingBatch={isSyncingBatch}
+              isAiPaused={isAiPaused}
+              onToggleAiPause={handleToggleAiPause}
               onSelectCandidate={handleSelectCandidateFromFeed}
               onToggleBackfill={handleToggleBackfill}
               onProcessPending={handleProcessPending}
@@ -637,6 +691,8 @@ export default function ATSDashboard() {
               syncState={syncState}
               loading={loadingFeed}
               isSyncingBatch={isSyncingBatch}
+              isAiPaused={isAiPaused}
+              onToggleAiPause={handleToggleAiPause}
               onSelectCandidate={handleSelectCandidateFromFeed}
               onToggleBackfill={handleToggleBackfill}
               onProcessPending={handleProcessPending}

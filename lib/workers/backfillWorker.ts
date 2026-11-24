@@ -155,7 +155,14 @@ export async function processBackfillBatch(options: BackfillOptions = {}): Promi
     }
   }
 
-  const finalStatus = hasMorePages || pendingRemaining > 0 ? SyncStatus.RUNNING : SyncStatus.COMPLETED;
+  let finalStatus = syncState.status;
+  if (action === "ingest" || action === "batch") {
+    finalStatus = hasMorePages ? SyncStatus.RUNNING : SyncStatus.COMPLETED;
+  } else if (action === "process" || action === "process_single") {
+    if (!hasMorePages && pendingRemaining === 0) {
+      finalStatus = SyncStatus.COMPLETED;
+    }
+  }
 
   // Single atomic database update for progress
   const updatedState = await prisma.syncState.update({
@@ -172,6 +179,9 @@ export async function processBackfillBatch(options: BackfillOptions = {}): Promi
     },
   });
 
+  const hasMoreWork =
+    action === "ingest" ? hasMorePages : action === "process" ? pendingRemaining > 0 : hasMorePages || pendingRemaining > 0;
+
   return {
     status: finalStatus,
     processedCount: ingestedInBatch + candidatesCreatedInBatch,
@@ -180,7 +190,7 @@ export async function processBackfillBatch(options: BackfillOptions = {}): Promi
     errors: errorsInBatch,
     pendingRemaining,
     nextPageToken: nextToken,
-    hasMore: hasMorePages || pendingRemaining > 0,
+    hasMore: hasMoreWork,
     syncState: updatedState,
   };
 }
