@@ -7,6 +7,7 @@ import { CentralPanelRanking } from "@/components/panels/CentralPanelRanking";
 import { RightPanelSearch, SearchFilters } from "@/components/panels/RightPanelSearch";
 import { ResumeViewerModal } from "@/components/ui/ResumeViewerModal";
 import { CandidateDetailModal } from "@/components/ui/CandidateDetailModal";
+import { OnboardingTutorialModal } from "@/components/ui/OnboardingTutorialModal";
 import { LoginWall } from "@/components/auth/LoginWall";
 import { CandidateSearchResponseItem } from "@/app/api/candidates/search/route";
 import { Inbox, Award, SlidersHorizontal, Loader2 } from "lucide-react";
@@ -69,6 +70,19 @@ export default function ATSDashboard() {
   const [resumeModalCandidate, setResumeModalCandidate] = useState<CandidateSearchResponseItem | null>(null);
   const [detailModalCandidate, setDetailModalCandidate] = useState<CandidateSearchResponseItem | null>(null);
   const [detailModalTab, setDetailModalTab] = useState<"overview" | "notes">("overview");
+
+  // Onboarding Tutorial State
+  const [showTutorial, setShowTutorial] = useState<boolean>(false);
+
+  // Auto-launch tutorial on first authenticated login
+  useEffect(() => {
+    if (accountEmail && !checkingAuth) {
+      const tutorialDone = localStorage.getItem("ats_tutorial_completed");
+      if (!tutorialDone) {
+        setShowTutorial(true);
+      }
+    }
+  }, [accountEmail, checkingAuth]);
 
   const handleUpdateCandidate = (updated: CandidateSearchResponseItem) => {
     setRankedCandidates((prev) =>
@@ -572,6 +586,7 @@ export default function ATSDashboard() {
           fetchEmailFeed();
         }}
         onDisconnectAccount={handleDisconnectAccount}
+        onOpenTutorial={() => setShowTutorial(true)}
       />
 
       {/* Optional Notification Toast / Banner */}
@@ -743,6 +758,12 @@ export default function ATSDashboard() {
         onClose={() => setDetailModalCandidate(null)}
         onOpenResume={(c) => setResumeModalCandidate(c)}
         onUpdateCandidate={handleUpdateCandidate}
+      />
+
+      {/* Interactive Onboarding Tutorial Modal */}
+      <OnboardingTutorialModal
+        isOpen={showTutorial}
+        onClose={() => setShowTutorial(false)}
       />
     </div>
   );

@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Sun,
   Moon,
+  HelpCircle,
 } from "lucide-react";
 
 interface NavbarProps {
@@ -20,6 +21,7 @@ interface NavbarProps {
   onToggleTheme?: () => void;
   onRefreshFeed?: () => void;
   onDisconnectAccount?: () => Promise<void>;
+  onOpenTutorial?: () => void;
 }
 
 export function Navbar({
@@ -29,6 +31,7 @@ export function Navbar({
   onToggleTheme,
   onRefreshFeed,
   onDisconnectAccount,
+  onOpenTutorial,
 }: NavbarProps) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
@@ -76,6 +79,18 @@ export function Navbar({
 
       {/* Right Actions */}
       <div className="flex items-center space-x-2">
+        {/* Tutorial / Help Button */}
+        {onOpenTutorial && (
+          <button
+            onClick={onOpenTutorial}
+            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400 border border-transparent hover:border-indigo-200 dark:hover:border-indigo-800 transition flex items-center space-x-1.5 text-xs font-medium"
+            title="Ver tutorial paso a paso"
+          >
+            <HelpCircle className="w-4 h-4 text-indigo-500" />
+            <span className="hidden sm:inline">Tutorial</span>
+          </button>
+        )}
+
         {/* Dark / Light Mode Toggle */}
         {onToggleTheme && (
           <button
