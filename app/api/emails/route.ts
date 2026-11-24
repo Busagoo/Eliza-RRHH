@@ -66,8 +66,21 @@ export async function GET(req: NextRequest) {
       prisma.email.count({ where }),
     ]);
 
+    const mappedEmails = emails.map((e) => {
+      if (e.candidate && !e.candidate.resumeFileUrl) {
+        return {
+          ...e,
+          candidate: {
+            ...e.candidate,
+            resumeFileUrl: `/api/candidates/${e.candidate.id}/resume`,
+          },
+        };
+      }
+      return e;
+    });
+
     return NextResponse.json({
-      emails,
+      emails: mappedEmails,
       pagination: {
         total,
         page,

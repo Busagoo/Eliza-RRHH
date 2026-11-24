@@ -64,19 +64,21 @@ function getSupabaseConfig() {
 }
 
 /**
- * Uploads a candidate resume attachment (PDF or DOCX) to Supabase Storage or S3/R2.
- * If external storage fails or is unconfigured, gracefully falls back to a Base64 data URL
- * so that serverless functions (Vercel) NEVER crash on read-only file systems.
+ * Uploads a candidate resume attachment (PDF, DOCX, or Image) to Supabase Storage or S3/R2.
+ * If external cloud storage is unconfigured, returns null.
+ * CRITICAL ARCHITECTURAL GUARANTEE: NEVER returns Base64 data URLs.
+ * Resumes are streamed on demand from the Gmail API via /api/candidates/[id]/resume,
+ * keeping database storage at 0 bytes for file attachments!
  */
 export async function uploadResume(
   buffer: Buffer,
   originalFilename: string,
   mimeType: string
-): Promise<string> {
+): Promise<string | null> {
   const extension = path.extname(originalFilename).toLowerCase() || ".pdf";
   const uniqueKey = `cv-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${extension}`;
 
-  // 1. Supabase Native REST Storage (Preferred)
+  // 1. Supabase Native REST Storage (Preferred if keys are provided)
   const { supabaseKey, supabaseUrl, bucket } = getSupabaseConfig();
   if (supabaseKey && supabaseUrl) {
     try {
@@ -140,7 +142,8 @@ export async function uploadResume(
     }
   }
 
-  // 3. Fallback: Base64 Data URL (Never throws filesystem error in Serverless!)
-  const base64Data = buffer.toString("base64");
-  return `data:${mimeType || "application/pdf"};base64,${base64Data}`;
+  // 3. Fallback: No external bucket configured.
+  // Return null so the candidate uses the lightweight on-demand streaming route /api/candidates/[id]/resume.
+  // This stores ZERO file bytes in PostgreSQL!
+  return null;
 }

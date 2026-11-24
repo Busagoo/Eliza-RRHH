@@ -254,7 +254,7 @@ export async function POST(req: NextRequest) {
         summary: parsed.summary || "",
         workHistory: parsed.workHistory || [],
         education: parsed.education || [],
-        resumeFileUrl: c.resumeFileUrl,
+        resumeFileUrl: c.resumeFileUrl || `/api/candidates/${c.id}/resume`,
         receivedAt: c.receivedAt,
         matchScore: evaluation?.matchScore ?? 10,
         justification: evaluation?.justification ?? "Sin evaluación específica.",

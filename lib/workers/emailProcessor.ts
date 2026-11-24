@@ -230,6 +230,11 @@ export async function processSingleEmail(
     // STEP 5: PERSIST CANDIDATE & UPDATE EMAIL
     // Preserves original receivedAt date (e.g. 2024)
     // -------------------------------------------------------------------------
+    const initialResumeUrl =
+      resumeFileUrl && resumeFileUrl.startsWith("http")
+        ? resumeFileUrl
+        : `/api/candidates/${emailRecord.id}/resume`;
+
     const candidate = await prisma.candidate.upsert({
       where: { emailId: emailRecord.id },
       create: {
@@ -244,7 +249,7 @@ export async function processSingleEmail(
         skills: parsedProfile.skills,
         languages: parsedProfile.languages as any,
         parsedData: parsedProfile as any,
-        resumeFileUrl,
+        resumeFileUrl: initialResumeUrl,
         resumeText: resumeText.slice(0, 10000),
         receivedAt: details.receivedAt, // PRESERVES HISTORICAL DATE
       },
@@ -259,10 +264,21 @@ export async function processSingleEmail(
         skills: parsedProfile.skills,
         languages: parsedProfile.languages as any,
         parsedData: parsedProfile as any,
-        resumeFileUrl: resumeFileUrl || undefined,
+        resumeFileUrl: initialResumeUrl,
         resumeText: resumeText.slice(0, 10000),
       },
     });
+
+    // Ensure candidate.id endpoint is set for maximum consistency if external storage is not used
+    if (!candidate.resumeFileUrl || !candidate.resumeFileUrl.startsWith("http")) {
+      const canonicalResumeUrl = `/api/candidates/${candidate.id}/resume`;
+      if (candidate.resumeFileUrl !== canonicalResumeUrl) {
+        await prisma.candidate.update({
+          where: { id: candidate.id },
+          data: { resumeFileUrl: canonicalResumeUrl },
+        });
+      }
+    }
 
     // Save pgvector embedding using raw SQL
     try {

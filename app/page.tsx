@@ -429,7 +429,7 @@ export default function ATSDashboard() {
             summary: c.parsedData?.summary || c.resumeText?.slice(0, 300) || "",
             workHistory: c.parsedData?.workHistory || [],
             education: c.parsedData?.education || [],
-            resumeFileUrl: c.resumeFileUrl,
+            resumeFileUrl: c.resumeFileUrl || `/api/candidates/${c.id}/resume`,
             receivedAt: c.receivedAt,
             matchScore: 85,
             justification: "Candidato seleccionado directamente desde la bandeja de entrada.",
